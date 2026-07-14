@@ -1,0 +1,16 @@
+[package]
+name = "voxcell"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.103"
+glam = "0.33.2"
+image = "0.25.10"
+sdl3 = "0.18.4"
+[package.metadata.bundle]
+name = "voxcell"
+identifier = "io.github.tomcmot.voxcell"
+resources = [
+    "assets",
+]
