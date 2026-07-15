@@ -121,6 +121,7 @@ const INDEXES: [u32; 36] = [
     20,21,22,22,23,21
 ];
 
+const SHADER_PATH: &'static str = "slang.spv";
 fn main() -> Result<()> {
     let _ = sdl3::hint::set(sdl3::hint::names::RENDER_VULKAN_DEBUG, "1");
     let sdl = sdl3::init()?;
@@ -147,7 +148,7 @@ fn main() -> Result<()> {
     upload_data(&device, &index_buffer, &INDEXES)?;
     let (texture, sampler) = create_texture_sampler(&device)?;
     let (_depth_texture, depth_info) = create_depth_texture(&device)?;
-    let pipeline = create_pipeline(&window, &device)?;
+    let pipeline = create_pipeline(&window, &device, SHADER_PATH)?;
     let mut time = TimeUniform {
         time: 0.
     };
@@ -271,9 +272,9 @@ const FRAG_SHADER: ShaderDesc = ShaderDesc {
     storage_textures: 0,
 };
 
-fn create_pipeline(window: &Window, device: &Device) -> Result<sdl3::gpu::GraphicsPipeline, anyhow::Error> {
+fn create_pipeline(window: &Window, device: &Device, path: &str) -> Result<sdl3::gpu::GraphicsPipeline, anyhow::Error> {
     // todo feed path in
-    let code = fs::read("slang.spv")?;
+    let code = fs::read(path)?;
     let vertex_shader = device
         .create_shader()
         .with_code(ShaderFormat::SPIRV, code.as_slice(), ShaderStage::Vertex)
@@ -374,9 +375,8 @@ fn upload_data<T>(device: &Device, vertex_buffer: &sdl3::gpu::Buffer, data: &[T]
     Ok(())
 }
 
-fn upload_texture(device: &Device) -> Result<Texture<'static>> {
-    // todo feed path in
-    let i = image::open("assets/debug.png")?;
+fn upload_texture(device: &Device, path: &str) -> Result<Texture<'static>> {
+    let i = image::open(path)?;
     let bytes = i.to_rgba8();
     let texture_info = TextureCreateInfo::default()
         .with_type(TextureType::_2DArray)
@@ -415,9 +415,10 @@ fn upload_texture(device: &Device) -> Result<Texture<'static>> {
     Ok(texture)
 }
 
+const TEXTURE_PATH: &'static str = "assets/debug.png";
 fn create_texture_sampler(device: &Device) -> Result<(Texture<'static>, Sampler)> {
     let sampler_info = SamplerCreateInfo::default();
     let sampler = device.create_sampler(sampler_info)?;
-    let texture = upload_texture(device)?;
+    let texture = upload_texture(device, TEXTURE_PATH)?;
     Ok((texture, sampler))
 }
