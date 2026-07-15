@@ -56,8 +56,8 @@ impl Camera {
     }
 
     /// SDL3 GPU uses the directx Z convention
-    fn projection(&self) -> Mat4 {
-        directx::perspective(self.zoom.to_radians(), 800./600., 0.01, 200.)
+    fn projection(&self, width: f32, height:f32) -> Mat4 {
+        directx::perspective(self.zoom.to_radians(), width/height, 0.01, 200.)
     }
 
     fn rotate(&mut self, x_offset: f32, y_offset: f32) {
@@ -121,13 +121,17 @@ const INDEXES: [u32; 36] = [
     20,21,22,22,23,21
 ];
 
+// todo these constants should be swapped to be queried at runtime
 const SHADER_PATH: &'static str = "slang.spv";
+const WINDOW_WIDTH: u32 = 800;
+const WINDOW_HEIGHT: u32 = 600;
+const TEXTURE_PATH: &'static str = "assets/debug.png";
 fn main() -> Result<()> {
     let _ = sdl3::hint::set(sdl3::hint::names::RENDER_VULKAN_DEBUG, "1");
     let sdl = sdl3::init()?;
     let video = sdl.video()?;
     let mut window = video
-        .window("voxcell", 800, 600)
+        .window("voxcell", WINDOW_WIDTH, WINDOW_HEIGHT)
         .position_centered()
         .vulkan()
         .build()?;
@@ -186,7 +190,7 @@ fn main() -> Result<()> {
         let render_pass = device.begin_render_pass(&cmdbuffer, &[color_target], Some(&depth_info))?;
         render_pass.bind_graphics_pipeline(&pipeline);
         let cbuffer = CameraBuffer {
-            proj_view: camera.projection() * camera.view(),
+            proj_view: camera.projection(WINDOW_WIDTH as f32, WINDOW_HEIGHT as f32) * camera.view(),
             model: Mat4::IDENTITY
         };
         cmdbuffer.push_vertex_uniform_data(0, &cbuffer);
@@ -248,6 +252,7 @@ fn create_depth_texture(device: &Device) -> Result<(Texture<'static>, DepthStenc
     Ok((texture, target_info))
 }
 
+// ideally this should get queried from the shaders
 struct ShaderDesc {
     entry_point: &'static CStr,
     samplers: u32,
@@ -415,7 +420,6 @@ fn upload_texture(device: &Device, path: &str) -> Result<Texture<'static>> {
     Ok(texture)
 }
 
-const TEXTURE_PATH: &'static str = "assets/debug.png";
 fn create_texture_sampler(device: &Device) -> Result<(Texture<'static>, Sampler)> {
     let sampler_info = SamplerCreateInfo::default();
     let sampler = device.create_sampler(sampler_info)?;
