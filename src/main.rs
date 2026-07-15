@@ -4,7 +4,7 @@ use anyhow::{Result};
 use glam::{Mat4, Vec2, Vec3, camera::rh::{proj::directx, view::look_to_mat4}};
 use sdl3::{
     event::Event, gpu::{
-        BlendFactor, BlendOp, BufferBinding, BufferRegion, BufferUsageFlags, ColorTargetBlendState, ColorTargetDescription, ColorTargetInfo, CompareOp, DepthStencilState, DepthStencilTargetInfo, Device, GraphicsPipelineTargetInfo, IndexElementSize, LoadOp, PrimitiveType, SampleCount, Sampler, SamplerCreateInfo, ShaderFormat, ShaderStage, StoreOp, Texture, TextureCreateInfo, TextureFormat, TextureRegion, TextureSamplerBinding, TextureTransferInfo, TextureType, TextureUsage, TransferBufferLocation, TransferBufferUsage, VertexAttribute, VertexBufferDescription, VertexElementFormat::{self}, VertexInputState,
+        BlendFactor, BlendOp, BufferBinding, BufferRegion, BufferUsageFlags, ColorTargetBlendState, ColorTargetDescription, ColorTargetInfo, CompareOp, CopyPass, DepthStencilState, DepthStencilTargetInfo, Device, GraphicsPipelineTargetInfo, IndexElementSize, LoadOp, PrimitiveType, SampleCount, Sampler, SamplerCreateInfo, ShaderFormat, ShaderStage, StoreOp, Texture, TextureCreateInfo, TextureFormat, TextureRegion, TextureSamplerBinding, TextureTransferInfo, TextureType, TextureUsage, TransferBufferLocation, TransferBufferUsage, VertexAttribute, VertexBufferDescription, VertexElementFormat::{self}, VertexInputState,
     }, keyboard::{Keycode, Scancode}, pixels::Color, sys::timer::SDL_GetTicksNS, video::Window,
 };
 
@@ -138,7 +138,6 @@ fn main() -> Result<()> {
     window.set_mouse_grab(true);
     sdl.mouse().set_relative_mouse_mode(&window, true);
     let device = Device::new(ShaderFormat::SPIRV, true)?.with_window(&window)?;
-
     let vertex_buffer = device
         .create_buffer()
         .with_size((VERTICES.len() * size_of::<Vertex>()) as u32)
@@ -148,9 +147,16 @@ fn main() -> Result<()> {
         .with_size((INDEXES.len() * size_of::<u32>()) as u32)
         .with_usage(BufferUsageFlags::INDEX)
         .build()?;
-    upload_data(&device, &vertex_buffer, &VERTICES)?;
-    upload_data(&device, &index_buffer, &INDEXES)?;
     let (texture, sampler) = create_texture_sampler(&device)?;
+    {
+        let copy_commands = device.acquire_command_buffer()?;
+        let copy_pass = device.begin_copy_pass(&copy_commands)?;
+        upload_data(&device, &copy_pass, &vertex_buffer, &VERTICES)?;
+        upload_data(&device, &copy_pass, &index_buffer, &INDEXES)?;
+        upload_texture(&device, &copy_pass, TEXTURE_PATH, &texture)?;
+        device.end_copy_pass(copy_pass);
+        let _ = copy_commands.submit()?;
+    };
     let (_depth_texture, depth_info) = create_depth_texture(&device)?;
     let pipeline = create_pipeline(&window, &device, SHADER_PATH)?;
     let mut time = TimeUniform {
@@ -278,7 +284,6 @@ const FRAG_SHADER: ShaderDesc = ShaderDesc {
 };
 
 fn create_pipeline(window: &Window, device: &Device, path: &str) -> Result<sdl3::gpu::GraphicsPipeline, anyhow::Error> {
-    // todo feed path in
     let code = fs::read(path)?;
     let vertex_shader = device
         .create_shader()
@@ -353,7 +358,7 @@ fn create_pipeline(window: &Window, device: &Device, path: &str) -> Result<sdl3:
         .build()?)
 }
 
-fn upload_data<T>(device: &Device, vertex_buffer: &sdl3::gpu::Buffer, data: &[T]) -> Result<()> 
+fn upload_data<T>(device: &Device, copy_pass: &CopyPass, vertex_buffer: &sdl3::gpu::Buffer, data: &[T]) -> Result<()> 
     where T: Copy
 {
     let size = (size_of::<T>() * data.len()) as u32;    
@@ -365,8 +370,6 @@ fn upload_data<T>(device: &Device, vertex_buffer: &sdl3::gpu::Buffer, data: &[T]
     let mut mem = transfer_buffer.map(device, false);
     mem.mem_mut().copy_from_slice(data);
     mem.unmap();
-    let init_cmd_buffer = device.acquire_command_buffer()?;
-    let copy_pass = device.begin_copy_pass(&init_cmd_buffer)?;
     let location = TransferBufferLocation::default()
         .with_offset(0)
         .with_transfer_buffer(&transfer_buffer);
@@ -375,26 +378,12 @@ fn upload_data<T>(device: &Device, vertex_buffer: &sdl3::gpu::Buffer, data: &[T]
         .with_offset(0)
         .with_size(size);
     copy_pass.upload_to_gpu_buffer(location, region, false);
-    device.end_copy_pass(copy_pass);
-    let _ = init_cmd_buffer.submit()?;
     Ok(())
 }
 
-fn upload_texture(device: &Device, path: &str) -> Result<Texture<'static>> {
+fn upload_texture(device: &Device, copy_pass: &CopyPass, path: &str, texture: &Texture<'static>) -> Result<()> {
     let i = image::open(path)?;
     let bytes = i.to_rgba8();
-    let texture_info = TextureCreateInfo::default()
-        .with_type(TextureType::_2DArray)
-        .with_format(TextureFormat::R8g8b8a8Unorm)
-        .with_usage(TextureUsage::SAMPLER)
-        .with_height(32)
-        .with_width(32)
-        .with_layer_count_or_depth(6)
-        .with_num_levels(1)
-        .with_sample_count(SampleCount::NoMultiSampling);
-    let texture = device.create_texture(texture_info)?;
-    let command_buffer = device.acquire_command_buffer()?;
-    let copy_pass= device.begin_copy_pass(&command_buffer)?;
     let transfer_buffer = device.create_transfer_buffer()
         .with_size(i.width() * i.height() * 4 *size_of::<u8>() as u32)
         .with_usage(TransferBufferUsage::UPLOAD)
@@ -407,7 +396,7 @@ fn upload_texture(device: &Device, path: &str) -> Result<Texture<'static>> {
                 .with_transfer_buffer(&transfer_buffer)
                 .with_offset(i * 32 * 32 * 4 * size_of::<u8>() as u32),
             TextureRegion::new()
-                .with_texture(&texture)
+                .with_texture(texture)
                 .with_depth(1)
                 .with_height(32)
                 .with_width(32)
@@ -415,14 +404,21 @@ fn upload_texture(device: &Device, path: &str) -> Result<Texture<'static>> {
                 .with_mip_level(0)
         , false);
     }
-    device.end_copy_pass(copy_pass);
-    let _ = command_buffer.submit()?;
-    Ok(texture)
+    Ok(())
 }
 
 fn create_texture_sampler(device: &Device) -> Result<(Texture<'static>, Sampler)> {
     let sampler_info = SamplerCreateInfo::default();
     let sampler = device.create_sampler(sampler_info)?;
-    let texture = upload_texture(device, TEXTURE_PATH)?;
+    let texture_info = TextureCreateInfo::default()
+        .with_type(TextureType::_2DArray)
+        .with_format(TextureFormat::R8g8b8a8Unorm)
+        .with_usage(TextureUsage::SAMPLER)
+        .with_height(32)
+        .with_width(32)
+        .with_layer_count_or_depth(6)
+        .with_num_levels(1)
+        .with_sample_count(SampleCount::NoMultiSampling);
+    let texture = device.create_texture(texture_info)?;
     Ok((texture, sampler))
 }
