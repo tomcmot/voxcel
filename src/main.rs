@@ -1,11 +1,11 @@
-use std::fs;
+use std::{ffi::CStr, fs};
 
 use anyhow::{Result};
 use glam::{Mat4, Vec3, camera::rh::{proj::directx, view::look_to_mat4}};
 use sdl3::{
     event::Event, gpu::{
         BlendFactor, BlendOp, BufferBinding, BufferRegion, BufferUsageFlags, ColorTargetBlendState, ColorTargetDescription, ColorTargetInfo, CompareOp, DepthStencilState, DepthStencilTargetInfo, Device, GraphicsPipelineTargetInfo, IndexElementSize, LoadOp, PrimitiveType, SampleCount, Sampler, SamplerCreateInfo, ShaderFormat, ShaderStage, StoreOp, Texture, TextureCreateInfo, TextureFormat, TextureRegion, TextureSamplerBinding, TextureTransferInfo, TextureType, TextureUsage, TransferBufferLocation, TransferBufferUsage, VertexAttribute, VertexBufferDescription, VertexElementFormat::{self}, VertexInputState,
-    }, keyboard::Keycode, pixels::Color, sys::timer::SDL_GetTicksNS, video::Window,
+    }, keyboard::{Keycode, Scancode}, pixels::Color, sys::timer::SDL_GetTicksNS, video::Window,
 };
 
 #[repr(C)]
@@ -45,7 +45,7 @@ impl Default for Camera {
     }
 }
 
-const INVERT_Y: bool = true;
+const INVERT_Y: bool = false;
 impl Camera {
     fn move_to(&mut self, p: Vec3) {
         self.position = p;
@@ -153,8 +153,12 @@ fn main() -> Result<()> {
     };
     let mut event_pump = sdl.event_pump()?;
     let mut camera = Camera::default();
-    let look_sensitivity = 0.1;
     'game: loop {
+        let current_time = unsafe {SDL_GetTicksNS()} as f32 / 1e9;
+        let delta = current_time - time.time;
+
+        let look_sensitivity = 1. * delta;
+        time.time = current_time;
         for event in event_pump.poll_iter() {
             match event {
                 Event::Quit { .. }
@@ -170,10 +174,9 @@ fn main() -> Result<()> {
                 _ => {}
             }
         }
-        camera.move_to(Vec3::new((time.time / 5.).sin() * 2., (time.time / 20.).sin(), (time.time / 5.).cos()) * 4.);
+        keyboard_event_handler(&event_pump, &mut camera, delta);
         let mut cmdbuffer = device.acquire_command_buffer()?;
         let swapchain_texture = cmdbuffer.wait_and_acquire_swapchain_texture(&window)?;
-        time.time = unsafe {SDL_GetTicksNS()} as f32 / 1e9;
         println!("{}", time.time);
         let color_target = ColorTargetInfo::default()
             .with_clear_color(Color::RGB(50, 100, 200))
@@ -205,6 +208,27 @@ fn main() -> Result<()> {
     Ok(())
 }
 
+fn keyboard_event_handler(event_pump: &sdl3::EventPump, camera: &mut Camera, delta: f32) {
+    let keyboard_state = sdl3::keyboard::KeyboardState::new(event_pump);
+    let camera_motion_x = 
+        if keyboard_state.is_scancode_pressed(Scancode::W) {
+            1.
+        } else if keyboard_state.is_scancode_pressed(Scancode::S) {
+            -1.
+        } else { 
+            0.
+        };
+    let camera_motion_y =
+        if keyboard_state.is_scancode_pressed(Scancode::D) {
+            1.
+        } else if keyboard_state.is_scancode_pressed(Scancode::A) {
+            -1.
+        } else { 
+            0.
+        };
+    camera.move_to(camera.position + (camera.front * camera_motion_x * delta) + (camera.front.cross(camera.up) * camera_motion_y * delta));
+}
+
 fn create_depth_texture(device: &Device) -> Result<(Texture<'static>, DepthStencilTargetInfo)> {
     let create_info = TextureCreateInfo::default()
         .with_format(TextureFormat::D32Float)
@@ -226,26 +250,50 @@ fn create_depth_texture(device: &Device) -> Result<(Texture<'static>, DepthStenc
     Ok((texture, target_info))
 }
 
+struct ShaderDesc {
+    entry_point: &'static CStr,
+    samplers: u32,
+    uniform_buffers: u32,
+    storage_textures: u32,
+    storage_buffers: u32
+}
+
+const VERTEX_SHADER: ShaderDesc = ShaderDesc {
+    entry_point: c"vertMain",
+    samplers: 0,
+    uniform_buffers: 1,
+    storage_buffers: 0,
+    storage_textures: 0
+};
+
+const FRAG_SHADER: ShaderDesc = ShaderDesc {
+    entry_point: c"fragMain",
+    samplers: 1,
+    uniform_buffers: 1,
+    storage_buffers: 0,
+    storage_textures: 0,
+};
+
 fn create_pipeline(window: &Window, device: &Device) -> Result<sdl3::gpu::GraphicsPipeline, anyhow::Error> {
     // todo feed path in
     let code = fs::read("slang.spv")?;
     let vertex_shader = device
         .create_shader()
         .with_code(ShaderFormat::SPIRV, code.as_slice(), ShaderStage::Vertex)
-        .with_entrypoint(c"vertMain")
-        .with_samplers(0)
-        .with_uniform_buffers(1)
-        .with_storage_textures(0)
-        .with_storage_buffers(0)
+        .with_entrypoint(VERTEX_SHADER.entry_point)
+        .with_samplers(VERTEX_SHADER.samplers)
+        .with_uniform_buffers(VERTEX_SHADER.uniform_buffers)
+        .with_storage_textures(VERTEX_SHADER.storage_textures)
+        .with_storage_buffers(VERTEX_SHADER.storage_buffers)
         .build()?;
     let frag_shader = device
         .create_shader()
         .with_code(ShaderFormat::SPIRV, code.as_slice(), ShaderStage::Fragment)
-        .with_entrypoint(c"fragMain")
-        .with_samplers(1)
-        .with_uniform_buffers(1)
-        .with_storage_textures(0)
-        .with_storage_buffers(0)
+        .with_entrypoint(FRAG_SHADER.entry_point)
+        .with_samplers(FRAG_SHADER.samplers)
+        .with_uniform_buffers(FRAG_SHADER.uniform_buffers)
+        .with_storage_textures(FRAG_SHADER.storage_textures)
+        .with_storage_buffers(FRAG_SHADER.storage_buffers)
         .build()?;
     let vertex_buffer_desc = VertexBufferDescription::default()
         .with_slot(0)
