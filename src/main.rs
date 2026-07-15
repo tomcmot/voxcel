@@ -1,7 +1,7 @@
 use std::{ffi::CStr, fs};
 
 use anyhow::{Result};
-use glam::{Mat4, Vec3, camera::rh::{proj::directx, view::look_to_mat4}};
+use glam::{Mat4, Vec2, Vec3, camera::rh::{proj::directx, view::look_to_mat4}};
 use sdl3::{
     event::Event, gpu::{
         BlendFactor, BlendOp, BufferBinding, BufferRegion, BufferUsageFlags, ColorTargetBlendState, ColorTargetDescription, ColorTargetInfo, CompareOp, DepthStencilState, DepthStencilTargetInfo, Device, GraphicsPipelineTargetInfo, IndexElementSize, LoadOp, PrimitiveType, SampleCount, Sampler, SamplerCreateInfo, ShaderFormat, ShaderStage, StoreOp, Texture, TextureCreateInfo, TextureFormat, TextureRegion, TextureSamplerBinding, TextureTransferInfo, TextureType, TextureUsage, TransferBufferLocation, TransferBufferUsage, VertexAttribute, VertexBufferDescription, VertexElementFormat::{self}, VertexInputState,
@@ -156,7 +156,6 @@ fn main() -> Result<()> {
     'game: loop {
         let current_time = unsafe {SDL_GetTicksNS()} as f32 / 1e9;
         let delta = current_time - time.time;
-
         let look_sensitivity = 1. * delta;
         time.time = current_time;
         for event in event_pump.poll_iter() {
@@ -177,7 +176,6 @@ fn main() -> Result<()> {
         keyboard_event_handler(&event_pump, &mut camera, delta);
         let mut cmdbuffer = device.acquire_command_buffer()?;
         let swapchain_texture = cmdbuffer.wait_and_acquire_swapchain_texture(&window)?;
-        println!("{}", time.time);
         let color_target = ColorTargetInfo::default()
             .with_clear_color(Color::RGB(50, 100, 200))
             .with_load_op(LoadOp::CLEAR)
@@ -210,23 +208,22 @@ fn main() -> Result<()> {
 
 fn keyboard_event_handler(event_pump: &sdl3::EventPump, camera: &mut Camera, delta: f32) {
     let keyboard_state = sdl3::keyboard::KeyboardState::new(event_pump);
-    let camera_motion_x = 
+    let camera_motion = Vec2::new( 
         if keyboard_state.is_scancode_pressed(Scancode::W) {
             1.
         } else if keyboard_state.is_scancode_pressed(Scancode::S) {
             -1.
         } else { 
             0.
-        };
-    let camera_motion_y =
+        },
         if keyboard_state.is_scancode_pressed(Scancode::D) {
             1.
         } else if keyboard_state.is_scancode_pressed(Scancode::A) {
             -1.
         } else { 
             0.
-        };
-    camera.move_to(camera.position + (camera.front * camera_motion_x * delta) + (camera.front.cross(camera.up) * camera_motion_y * delta));
+        }).normalize_or_zero();
+    camera.move_to(camera.position + (camera.front * camera_motion.x * delta) + (camera.front.cross(camera.up) * camera_motion.y * delta));
 }
 
 fn create_depth_texture(device: &Device) -> Result<(Texture<'static>, DepthStencilTargetInfo)> {
