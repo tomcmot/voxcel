@@ -80,38 +80,6 @@ struct TimeUniform {
     time: f32,
 }
 
-const VERTICES: [Vertex; 24] = [                                                                                                                          
-       Vertex { position: Vec3::new(-0.5,  0.5, 0.5), uv: Vec3::new(0., 0., 0.) }, // Top Left Front                                                                                                           
-       Vertex { position: Vec3::new( 0.5,  0.5, 0.5), uv: Vec3::new(1., 0., 0.) }, // Top Right Front                                                                                                         
-       Vertex { position: Vec3::new(-0.5, -0.5, 0.5), uv: Vec3::new(0., 1., 0.) }, // Bottom Left Front                                                                                                        
-       Vertex { position: Vec3::new( 0.5, -0.5, 0.5), uv: Vec3::new(1., 1., 0.) }, // Bottom Right Front   
-                                            
-       Vertex { position: Vec3::new(-0.5,  0.5, -0.5), uv: Vec3::new(1., 0.,1.) }, // Top Left Back                                                                                                            
-       Vertex { position: Vec3::new( 0.5,  0.5, -0.5), uv: Vec3::new(0., 0.,1.) }, // Top Right Back                                                                                                          
-       Vertex { position: Vec3::new(-0.5, -0.5, -0.5), uv: Vec3::new(1., 1.,1.) }, // Bottom Left Back                                                                                                         
-       Vertex { position: Vec3::new( 0.5, -0.5, -0.5), uv: Vec3::new(0., 1.,1.) }, // Bottom Right Back  
-                                                                                             
-       Vertex { position: Vec3::new(-0.5,  0.5, 0.5), uv: Vec3::new(0., 0., 2.) }, // Top Left Front                                                                                                                 
-       Vertex { position: Vec3::new( 0.5,  0.5, 0.5), uv: Vec3::new(1., 0., 2.) }, // Top Right Front
-       Vertex { position: Vec3::new(-0.5,  0.5, -0.5), uv: Vec3::new(0., 1.,2.) }, // Top Left Back                                                                                                           
-       Vertex { position: Vec3::new( 0.5,  0.5, -0.5), uv: Vec3::new(1., 1.,2.) }, // Top Right Back
- 
-       Vertex { position: Vec3::new(-0.5, -0.5, 0.5), uv: Vec3::new(0., 0., 3.) }, // Bottom Left Front                                                                                                        
-       Vertex { position: Vec3::new( 0.5, -0.5, 0.5), uv: Vec3::new(1., 0., 3.) }, // Bottom Right Front                                                                                                       
-       Vertex { position: Vec3::new(-0.5, -0.5, -0.5), uv: Vec3::new(0., 1.,3.) }, // Bottom Left Back                                                                                                         
-       Vertex { position: Vec3::new( 0.5, -0.5, -0.5), uv: Vec3::new(1., 1.,3.) }, // Bottom Right Back    
-
-       Vertex { position: Vec3::new(-0.5,  0.5, 0.5), uv: Vec3::new(1., 0., 4.) }, // Top Left Front                                                                                                      
-       Vertex { position: Vec3::new(-0.5, -0.5, 0.5), uv: Vec3::new(1., 1., 4.) }, // Bottom Left Front    
-       Vertex { position: Vec3::new(-0.5,  0.5, -0.5), uv: Vec3::new(0., 0.,4.) }, // Top Left Back                                                                                                            
-       Vertex { position: Vec3::new(-0.5, -0.5, -0.5), uv: Vec3::new(0., 1.,4.) }, // Bottom Left Back      
-
-       Vertex { position: Vec3::new( 0.5,  0.5, 0.5), uv: Vec3::new(0., 0., 5.) }, // Top Right Front                                                                                                      
-       Vertex { position: Vec3::new( 0.5, -0.5, 0.5), uv: Vec3::new(0., 1., 5.) }, // Bottom Right Front                                                                                                         
-       Vertex { position: Vec3::new( 0.5,  0.5, -0.5), uv: Vec3::new(1., 0.,5.) }, // Top Right Back                                                                                                          
-       Vertex { position: Vec3::new( 0.5, -0.5, -0.5), uv: Vec3::new(1., 1.,5.) }, // Bottom Right Back  
-];
-
 const INDEXES: [u32; 36] = [
     0,1,2,2,3,1,
     4,5,6,6,7,5,
@@ -121,11 +89,55 @@ const INDEXES: [u32; 36] = [
     20,21,22,22,23,21
 ];
 
+struct Mesh {
+    vertices: Vec<Vertex>,
+    indexes: Vec<u32>
+}
+
+impl Mesh {
+    fn new(offset: u32, top: f32, bottom: f32, sides: f32) -> Self {
+        Mesh {
+            vertices: vec![                                                                            
+                Vertex { position: Vec3::new(-0.5,  0.5, 0.5), uv: Vec3::new(0., 0.,  top) }, // Top Left Front                                                                                                                 
+                Vertex { position: Vec3::new( 0.5,  0.5, 0.5), uv: Vec3::new(1., 0.,  top) }, // Top Right Front
+                Vertex { position: Vec3::new(-0.5,  0.5, -0.5), uv: Vec3::new(0., 1., top) }, // Top Left Back                                                                                                           
+                Vertex { position: Vec3::new( 0.5,  0.5, -0.5), uv: Vec3::new(1., 1., top) }, // Top Right Back
+            
+                Vertex { position: Vec3::new(-0.5, -0.5, 0.5), uv: Vec3::new(0., 0.,  bottom) }, // Bottom Left Front                                                                                                        
+                Vertex { position: Vec3::new( 0.5, -0.5, 0.5), uv: Vec3::new(1., 0.,  bottom) }, // Bottom Right Front                                                                                                       
+                Vertex { position: Vec3::new(-0.5, -0.5, -0.5), uv: Vec3::new(0., 1., bottom) }, // Bottom Left Back                                                                                                         
+                Vertex { position: Vec3::new( 0.5, -0.5, -0.5), uv: Vec3::new(1., 1., bottom) }, // Bottom Right Back  
+
+                Vertex { position: Vec3::new(-0.5,  0.5, 0.5), uv: Vec3::new(0., 0., sides) }, // Top Left Front                                                                                                           
+                Vertex { position: Vec3::new( 0.5,  0.5, 0.5), uv: Vec3::new(1., 0., sides) }, // Top Right Front                                                                                                         
+                Vertex { position: Vec3::new(-0.5, -0.5, 0.5), uv: Vec3::new(0., 1., sides) }, // Bottom Left Front                                                                                                        
+                Vertex { position: Vec3::new( 0.5, -0.5, 0.5), uv: Vec3::new(1., 1., sides) }, // Bottom Right Front   
+                                                        
+                Vertex { position: Vec3::new(-0.5,  0.5, -0.5), uv: Vec3::new(1., 0., sides) }, // Top Left Back                                                                                                            
+                Vertex { position: Vec3::new( 0.5,  0.5, -0.5), uv: Vec3::new(0., 0., sides) }, // Top Right Back                                                                                                          
+                Vertex { position: Vec3::new(-0.5, -0.5, -0.5), uv: Vec3::new(1., 1., sides) }, // Bottom Left Back                                                                                                         
+                Vertex { position: Vec3::new( 0.5, -0.5, -0.5), uv: Vec3::new(0., 1., sides) }, // Bottom Right Back   
+
+                Vertex { position: Vec3::new(-0.5,  0.5, 0.5), uv: Vec3::new(1., 0.,  sides) }, // Top Left Front                                                                                                      
+                Vertex { position: Vec3::new(-0.5, -0.5, 0.5), uv: Vec3::new(1., 1.,  sides) }, // Bottom Left Front    
+                Vertex { position: Vec3::new(-0.5,  0.5, -0.5), uv: Vec3::new(0., 0., sides) }, // Top Left Back                                                                                                            
+                Vertex { position: Vec3::new(-0.5, -0.5, -0.5), uv: Vec3::new(0., 1., sides) }, // Bottom Left Back      
+
+                Vertex { position: Vec3::new( 0.5,  0.5, 0.5), uv: Vec3::new(0., 0.,  sides) }, // Top Right Front                                                                                                      
+                Vertex { position: Vec3::new( 0.5, -0.5, 0.5), uv: Vec3::new(0., 1.,  sides) }, // Bottom Right Front                                                                                                         
+                Vertex { position: Vec3::new( 0.5,  0.5, -0.5), uv: Vec3::new(1., 0., sides) }, // Top Right Back                                                                                                          
+                Vertex { position: Vec3::new( 0.5, -0.5, -0.5), uv: Vec3::new(1., 1., sides) }, // Bottom Right Back  
+            ],
+            indexes: INDEXES.map(|i| i+(offset*36)).to_vec()
+        }
+    }
+}
+
 // todo these constants should be swapped to be queried at runtime
 const SHADER_PATH: &'static str = "slang.spv";
 const WINDOW_WIDTH: u32 = 800;
 const WINDOW_HEIGHT: u32 = 600;
-const TEXTURE_PATH: &'static str = "assets/debug.png";
+const TEXTURE_PATH: &'static str = "assets/blocks.png";
 fn main() -> Result<()> {
     let _ = sdl3::hint::set(sdl3::hint::names::RENDER_VULKAN_DEBUG, "1");
     let sdl = sdl3::init()?;
@@ -138,21 +150,22 @@ fn main() -> Result<()> {
     window.set_mouse_grab(true);
     sdl.mouse().set_relative_mouse_mode(&window, true);
     let device = Device::new(ShaderFormat::SPIRV, true)?.with_window(&window)?;
+    let mesh = Mesh::new(0, 0., 2., 1.);
     let vertex_buffer = device
         .create_buffer()
-        .with_size((VERTICES.len() * size_of::<Vertex>()) as u32)
+        .with_size((mesh.vertices.len() * size_of::<Vertex>()) as u32)
         .with_usage(BufferUsageFlags::VERTEX)
         .build()?;
     let index_buffer = device.create_buffer()
-        .with_size((INDEXES.len() * size_of::<u32>()) as u32)
+        .with_size((mesh.indexes.len() * size_of::<u32>()) as u32)
         .with_usage(BufferUsageFlags::INDEX)
         .build()?;
     let (texture, sampler) = create_texture_sampler(&device)?;
     {
         let copy_commands = device.acquire_command_buffer()?;
         let copy_pass = device.begin_copy_pass(&copy_commands)?;
-        upload_data(&device, &copy_pass, &vertex_buffer, &VERTICES)?;
-        upload_data(&device, &copy_pass, &index_buffer, &INDEXES)?;
+        upload_data(&device, &copy_pass, &vertex_buffer, &mesh.vertices)?;
+        upload_data(&device, &copy_pass, &index_buffer, &mesh.indexes)?;
         upload_texture(&device, &copy_pass, TEXTURE_PATH, &texture)?;
         device.end_copy_pass(copy_pass);
         let _ = copy_commands.submit()?;
