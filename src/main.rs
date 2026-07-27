@@ -1,11 +1,27 @@
 use std::{ffi::CStr, fs};
 
-use anyhow::{Result};
-use glam::{Mat4, Vec2, Vec3, camera::rh::{proj::directx, view::look_to_mat4}};
+use anyhow::Result;
+use glam::{
+    Mat4, Vec2, Vec3,
+    camera::rh::{proj::directx, view::look_to_mat4},
+};
 use sdl3::{
-    event::Event, gpu::{
-        BlendFactor, BlendOp, BufferBinding, BufferRegion, BufferUsageFlags, ColorTargetBlendState, ColorTargetDescription, ColorTargetInfo, CompareOp, CopyPass, DepthStencilState, DepthStencilTargetInfo, Device, GraphicsPipelineTargetInfo, IndexElementSize, LoadOp, PrimitiveType, SampleCount, Sampler, SamplerCreateInfo, ShaderFormat, ShaderStage, StoreOp, Texture, TextureCreateInfo, TextureFormat, TextureRegion, TextureSamplerBinding, TextureTransferInfo, TextureType, TextureUsage, TransferBufferLocation, TransferBufferUsage, VertexAttribute, VertexBufferDescription, VertexElementFormat::{self}, VertexInputState,
-    }, keyboard::{Keycode, Scancode}, pixels::Color, sys::timer::SDL_GetTicksNS, video::Window,
+    event::Event,
+    gpu::{
+        BlendFactor, BlendOp, BufferBinding, BufferRegion, BufferUsageFlags, ColorTargetBlendState,
+        ColorTargetDescription, ColorTargetInfo, CompareOp, CopyPass, DepthStencilState,
+        DepthStencilTargetInfo, Device, GraphicsPipelineTargetInfo, IndexElementSize, LoadOp,
+        PrimitiveType, SampleCount, Sampler, SamplerCreateInfo, ShaderFormat, ShaderStage, StoreOp,
+        Texture, TextureCreateInfo, TextureFormat, TextureRegion, TextureSamplerBinding,
+        TextureTransferInfo, TextureType, TextureUsage, TransferBufferLocation,
+        TransferBufferUsage, VertexAttribute, VertexBufferDescription,
+        VertexElementFormat::{self},
+        VertexInputState,
+    },
+    keyboard::{Keycode, Scancode},
+    pixels::Color,
+    sys::timer::SDL_GetTicksNS,
+    video::Window,
 };
 
 #[repr(C)]
@@ -16,7 +32,8 @@ struct Vertex {
 }
 
 #[repr(C)]
-#[derive(Clone, Copy)]struct Camera {
+#[derive(Clone, Copy)]
+struct Camera {
     position: Vec3,
     front: Vec3,
     up: Vec3,
@@ -35,7 +52,7 @@ struct CameraBuffer {
 impl Default for Camera {
     fn default() -> Self {
         Camera {
-            position: Vec3::new(0.,0.,5.),
+            position: Vec3::new(0., 0., 5.),
             front: -Vec3::Z,
             up: Vec3::Y,
             pitch: 0.,
@@ -56,8 +73,8 @@ impl Camera {
     }
 
     /// SDL3 GPU uses the directx Z convention
-    fn projection(&self, width: f32, height:f32) -> Mat4 {
-        directx::perspective(self.zoom.to_radians(), width/height, 0.01, 200.)
+    fn projection(&self, width: f32, height: f32) -> Mat4 {
+        directx::perspective(self.zoom.to_radians(), width / height, 0.01, 200.)
     }
 
     fn rotate(&mut self, x_offset: f32, y_offset: f32) {
@@ -69,9 +86,14 @@ impl Camera {
         // calculate new facing
         self.front = Vec3::new(
             yaw_rad.cos() * pitch_rad.cos(),
-            if INVERT_Y { -pitch_rad.sin() } else { pitch_rad.sin()} ,
+            if INVERT_Y {
+                -pitch_rad.sin()
+            } else {
+                pitch_rad.sin()
+            },
             yaw_rad.sin() * pitch_rad.cos(),
-        ).normalize();
+        )
+        .normalize();
     }
 }
 
@@ -81,54 +103,122 @@ struct TimeUniform {
 }
 
 const INDEXES: [u32; 36] = [
-    0,1,2,2,3,1,
-    4,5,6,6,7,5,
-    8,9,10,10,11,9,
-    12,13,14,14,15,13,
-    16,17,18,18,19,17,
-    20,21,22,22,23,21
+    0, 1, 2, 2, 3, 1, 
+    4, 5, 6, 6, 7, 5, 
+    8, 9, 10, 10, 11, 9, 
+    12, 13, 14, 14, 15, 13, 
+    16, 17, 18, 18, 19, 17, 
+    20, 21, 22, 22, 23, 21,
 ];
 
 struct Mesh {
     vertices: Vec<Vertex>,
-    indexes: Vec<u32>
+    indexes: Vec<u32>,
 }
 
 impl Mesh {
-    fn new(offset: u32, top: f32, bottom: f32, sides: f32) -> Self {
+    fn new(position: Vec3, index: u32, top: f32, bottom: f32, sides: f32) -> Self {
+        let vertices = vec![
+            Vertex {
+                position: Vec3::new(-0.5, 0.5, 0.5) + position,
+                uv: Vec3::new(0., 0., top),
+            }, // Top Left Front
+            Vertex {
+                position: Vec3::new(0.5, 0.5, 0.5) + position,
+                uv: Vec3::new(1., 0., top),
+            }, // Top Right Front
+            Vertex {
+                position: Vec3::new(-0.5, 0.5, -0.5) + position,
+                uv: Vec3::new(0., 1., top),
+            }, // Top Left Back
+            Vertex {
+                position: Vec3::new(0.5, 0.5, -0.5) + position,
+                uv: Vec3::new(1., 1., top),
+            }, // Top Right Back
+            Vertex {
+                position: Vec3::new(-0.5, -0.5, 0.5) + position,
+                uv: Vec3::new(0., 0., bottom),
+            }, // Bottom Left Front
+            Vertex {
+                position: Vec3::new(0.5, -0.5, 0.5) + position,
+                uv: Vec3::new(1., 0., bottom),
+            }, // Bottom Right Front
+            Vertex {
+                position: Vec3::new(-0.5, -0.5, -0.5) + position,
+                uv: Vec3::new(0., 1., bottom),
+            }, // Bottom Left Back
+            Vertex {
+                position: Vec3::new(0.5, -0.5, -0.5) + position,
+                uv: Vec3::new(1., 1., bottom),
+            }, // Bottom Right Back
+            Vertex {
+                position: Vec3::new(-0.5, 0.5, 0.5) + position,
+                uv: Vec3::new(0., 0., sides),
+            }, // Top Left Front
+            Vertex {
+                position: Vec3::new(0.5, 0.5, 0.5) + position,
+                uv: Vec3::new(1., 0., sides),
+            }, // Top Right Front
+            Vertex {
+                position: Vec3::new(-0.5, -0.5, 0.5) + position,
+                uv: Vec3::new(0., 1., sides),
+            }, // Bottom Left Front
+            Vertex {
+                position: Vec3::new(0.5, -0.5, 0.5) + position,
+                uv: Vec3::new(1., 1., sides),
+            }, // Bottom Right Front
+            Vertex {
+                position: Vec3::new(-0.5, 0.5, -0.5) + position,
+                uv: Vec3::new(1., 0., sides),
+            }, // Top Left Back
+            Vertex {
+                position: Vec3::new(0.5, 0.5, -0.5) + position,
+                uv: Vec3::new(0., 0., sides),
+            }, // Top Right Back
+            Vertex {
+                position: Vec3::new(-0.5, -0.5, -0.5) + position,
+                uv: Vec3::new(1., 1., sides),
+            }, // Bottom Left Back
+            Vertex {
+                position: Vec3::new(0.5, -0.5, -0.5) + position,
+                uv: Vec3::new(0., 1., sides),
+            }, // Bottom Right Back
+            Vertex {
+                position: Vec3::new(-0.5, 0.5, 0.5) + position,
+                uv: Vec3::new(1., 0., sides),
+            }, // Top Left Front
+            Vertex {
+                position: Vec3::new(-0.5, -0.5, 0.5) + position,
+                uv: Vec3::new(1., 1., sides),
+            }, // Bottom Left Front
+            Vertex {
+                position: Vec3::new(-0.5, 0.5, -0.5) + position,
+                uv: Vec3::new(0., 0., sides),
+            }, // Top Left Back
+            Vertex {
+                position: Vec3::new(-0.5, -0.5, -0.5) + position,
+                uv: Vec3::new(0., 1., sides),
+            }, // Bottom Left Back
+            Vertex {
+                position: Vec3::new(0.5, 0.5, 0.5) + position,
+                uv: Vec3::new(0., 0., sides),
+            }, // Top Right Front
+            Vertex {
+                position: Vec3::new(0.5, -0.5, 0.5) + position,
+                uv: Vec3::new(0., 1., sides),
+            }, // Bottom Right Front
+            Vertex {
+                position: Vec3::new(0.5, 0.5, -0.5) + position,
+                uv: Vec3::new(1., 0., sides),
+            }, // Top Right Back
+            Vertex {
+                position: Vec3::new(0.5, -0.5, -0.5) + position,
+                uv: Vec3::new(1., 1., sides),
+            }, // Bottom Right Back
+        ];
         Mesh {
-            vertices: vec![                                                                            
-                Vertex { position: Vec3::new(-0.5,  0.5, 0.5), uv: Vec3::new(0., 0.,  top) }, // Top Left Front                                                                                                                 
-                Vertex { position: Vec3::new( 0.5,  0.5, 0.5), uv: Vec3::new(1., 0.,  top) }, // Top Right Front
-                Vertex { position: Vec3::new(-0.5,  0.5, -0.5), uv: Vec3::new(0., 1., top) }, // Top Left Back                                                                                                           
-                Vertex { position: Vec3::new( 0.5,  0.5, -0.5), uv: Vec3::new(1., 1., top) }, // Top Right Back
-            
-                Vertex { position: Vec3::new(-0.5, -0.5, 0.5), uv: Vec3::new(0., 0.,  bottom) }, // Bottom Left Front                                                                                                        
-                Vertex { position: Vec3::new( 0.5, -0.5, 0.5), uv: Vec3::new(1., 0.,  bottom) }, // Bottom Right Front                                                                                                       
-                Vertex { position: Vec3::new(-0.5, -0.5, -0.5), uv: Vec3::new(0., 1., bottom) }, // Bottom Left Back                                                                                                         
-                Vertex { position: Vec3::new( 0.5, -0.5, -0.5), uv: Vec3::new(1., 1., bottom) }, // Bottom Right Back  
-
-                Vertex { position: Vec3::new(-0.5,  0.5, 0.5), uv: Vec3::new(0., 0., sides) }, // Top Left Front                                                                                                           
-                Vertex { position: Vec3::new( 0.5,  0.5, 0.5), uv: Vec3::new(1., 0., sides) }, // Top Right Front                                                                                                         
-                Vertex { position: Vec3::new(-0.5, -0.5, 0.5), uv: Vec3::new(0., 1., sides) }, // Bottom Left Front                                                                                                        
-                Vertex { position: Vec3::new( 0.5, -0.5, 0.5), uv: Vec3::new(1., 1., sides) }, // Bottom Right Front   
-                                                        
-                Vertex { position: Vec3::new(-0.5,  0.5, -0.5), uv: Vec3::new(1., 0., sides) }, // Top Left Back                                                                                                            
-                Vertex { position: Vec3::new( 0.5,  0.5, -0.5), uv: Vec3::new(0., 0., sides) }, // Top Right Back                                                                                                          
-                Vertex { position: Vec3::new(-0.5, -0.5, -0.5), uv: Vec3::new(1., 1., sides) }, // Bottom Left Back                                                                                                         
-                Vertex { position: Vec3::new( 0.5, -0.5, -0.5), uv: Vec3::new(0., 1., sides) }, // Bottom Right Back   
-
-                Vertex { position: Vec3::new(-0.5,  0.5, 0.5), uv: Vec3::new(1., 0.,  sides) }, // Top Left Front                                                                                                      
-                Vertex { position: Vec3::new(-0.5, -0.5, 0.5), uv: Vec3::new(1., 1.,  sides) }, // Bottom Left Front    
-                Vertex { position: Vec3::new(-0.5,  0.5, -0.5), uv: Vec3::new(0., 0., sides) }, // Top Left Back                                                                                                            
-                Vertex { position: Vec3::new(-0.5, -0.5, -0.5), uv: Vec3::new(0., 1., sides) }, // Bottom Left Back      
-
-                Vertex { position: Vec3::new( 0.5,  0.5, 0.5), uv: Vec3::new(0., 0.,  sides) }, // Top Right Front                                                                                                      
-                Vertex { position: Vec3::new( 0.5, -0.5, 0.5), uv: Vec3::new(0., 1.,  sides) }, // Bottom Right Front                                                                                                         
-                Vertex { position: Vec3::new( 0.5,  0.5, -0.5), uv: Vec3::new(1., 0., sides) }, // Top Right Back                                                                                                          
-                Vertex { position: Vec3::new( 0.5, -0.5, -0.5), uv: Vec3::new(1., 1., sides) }, // Bottom Right Back  
-            ],
-            indexes: INDEXES.map(|i| i+(offset*36)).to_vec()
+            vertices: vertices,
+            indexes: INDEXES.map(|i| i + (index * 36)).to_vec(),
         }
     }
 }
@@ -150,13 +240,14 @@ fn main() -> Result<()> {
     window.set_mouse_grab(true);
     sdl.mouse().set_relative_mouse_mode(&window, true);
     let device = Device::new(ShaderFormat::SPIRV, true)?.with_window(&window)?;
-    let mesh = Mesh::new(0, 0., 2., 1.);
+    let mesh = Mesh::new(Vec3::ZERO, 0, 0., 2., 1.);
     let vertex_buffer = device
         .create_buffer()
         .with_size((mesh.vertices.len() * size_of::<Vertex>()) as u32)
         .with_usage(BufferUsageFlags::VERTEX)
         .build()?;
-    let index_buffer = device.create_buffer()
+    let index_buffer = device
+        .create_buffer()
         .with_size((mesh.indexes.len() * size_of::<u32>()) as u32)
         .with_usage(BufferUsageFlags::INDEX)
         .build()?;
@@ -172,13 +263,11 @@ fn main() -> Result<()> {
     };
     let (_depth_texture, depth_info) = create_depth_texture(&device)?;
     let pipeline = create_pipeline(&window, &device, SHADER_PATH)?;
-    let mut time = TimeUniform {
-        time: 0.
-    };
+    let mut time = TimeUniform { time: 0. };
     let mut event_pump = sdl.event_pump()?;
     let mut camera = Camera::default();
     'game: loop {
-        let current_time = unsafe {SDL_GetTicksNS()} as f32 / 1e9;
+        let current_time = unsafe { SDL_GetTicksNS() } as f32 / 1e9;
         let delta = current_time - time.time;
         let look_sensitivity = 1. * delta;
         time.time = current_time;
@@ -190,10 +279,19 @@ fn main() -> Result<()> {
                     ..
                 } => {
                     break 'game;
-                },
-                Event::MouseMotion {  timestamp:_, window_id: _, which: _, mousestate:_, x:_, y: _, xrel, yrel } => {
+                }
+                Event::MouseMotion {
+                    timestamp: _,
+                    window_id: _,
+                    which: _,
+                    mousestate: _,
+                    x: _,
+                    y: _,
+                    xrel,
+                    yrel,
+                } => {
                     camera.rotate(xrel * look_sensitivity, yrel * look_sensitivity);
-                },
+                }
                 _ => {}
             }
         }
@@ -206,11 +304,12 @@ fn main() -> Result<()> {
             .with_store_op(StoreOp::STORE)
             .with_texture(&swapchain_texture);
 
-        let render_pass = device.begin_render_pass(&cmdbuffer, &[color_target], Some(&depth_info))?;
+        let render_pass =
+            device.begin_render_pass(&cmdbuffer, &[color_target], Some(&depth_info))?;
         render_pass.bind_graphics_pipeline(&pipeline);
         let cbuffer = CameraBuffer {
             proj_view: camera.projection(WINDOW_WIDTH as f32, WINDOW_HEIGHT as f32) * camera.view(),
-            model: Mat4::IDENTITY
+            model: Mat4::IDENTITY,
         };
         cmdbuffer.push_vertex_uniform_data(0, &cbuffer);
         cmdbuffer.push_fragment_uniform_data(0, &time);
@@ -218,7 +317,12 @@ fn main() -> Result<()> {
             .with_buffer(&vertex_buffer)
             .with_offset(0)];
         render_pass.bind_vertex_buffers(0, &bindings);
-        render_pass.bind_index_buffer(&BufferBinding::default().with_buffer(&index_buffer).with_offset(0), IndexElementSize::_32BIT);
+        render_pass.bind_index_buffer(
+            &BufferBinding::default()
+                .with_buffer(&index_buffer)
+                .with_offset(0),
+            IndexElementSize::_32BIT,
+        );
         let tex_samp_bind = TextureSamplerBinding::default()
             .with_sampler(&sampler)
             .with_texture(&texture);
@@ -232,22 +336,28 @@ fn main() -> Result<()> {
 
 fn keyboard_event_handler(event_pump: &sdl3::EventPump, camera: &mut Camera, delta: f32) {
     let keyboard_state = sdl3::keyboard::KeyboardState::new(event_pump);
-    let camera_motion = Vec2::new( 
+    let camera_motion = Vec2::new(
         if keyboard_state.is_scancode_pressed(Scancode::W) {
             1.
         } else if keyboard_state.is_scancode_pressed(Scancode::S) {
             -1.
-        } else { 
+        } else {
             0.
         },
         if keyboard_state.is_scancode_pressed(Scancode::D) {
             1.
         } else if keyboard_state.is_scancode_pressed(Scancode::A) {
             -1.
-        } else { 
+        } else {
             0.
-        }).normalize_or_zero();
-    camera.move_to(camera.position + (camera.front * camera_motion.x * delta) + (camera.front.cross(camera.up) * camera_motion.y * delta));
+        },
+    )
+    .normalize_or_zero();
+    camera.move_to(
+        camera.position
+            + (camera.front * camera_motion.x * delta)
+            + (camera.front.cross(camera.up) * camera_motion.y * delta),
+    );
 }
 
 fn create_depth_texture(device: &Device) -> Result<(Texture<'static>, DepthStencilTargetInfo)> {
@@ -277,7 +387,7 @@ struct ShaderDesc {
     samplers: u32,
     uniform_buffers: u32,
     storage_textures: u32,
-    storage_buffers: u32
+    storage_buffers: u32,
 }
 
 const VERTEX_SHADER: ShaderDesc = ShaderDesc {
@@ -285,7 +395,7 @@ const VERTEX_SHADER: ShaderDesc = ShaderDesc {
     samplers: 0,
     uniform_buffers: 1,
     storage_buffers: 0,
-    storage_textures: 0
+    storage_textures: 0,
 };
 
 const FRAG_SHADER: ShaderDesc = ShaderDesc {
@@ -296,7 +406,11 @@ const FRAG_SHADER: ShaderDesc = ShaderDesc {
     storage_textures: 0,
 };
 
-fn create_pipeline(window: &Window, device: &Device, path: &str) -> Result<sdl3::gpu::GraphicsPipeline, anyhow::Error> {
+fn create_pipeline(
+    window: &Window,
+    device: &Device,
+    path: &str,
+) -> Result<sdl3::gpu::GraphicsPipeline, anyhow::Error> {
     let code = fs::read(path)?;
     let vertex_shader = device
         .create_shader()
@@ -357,24 +471,30 @@ fn create_pipeline(window: &Window, device: &Device, path: &str) -> Result<sdl3:
         )
         .with_target_info(
             GraphicsPipelineTargetInfo::new()
-            .with_color_target_descriptions(&[color_target])
-            .with_has_depth_stencil_target(true)
-            .with_depth_stencil_format(TextureFormat::D32Float),
+                .with_color_target_descriptions(&[color_target])
+                .with_has_depth_stencil_target(true)
+                .with_depth_stencil_format(TextureFormat::D32Float),
         )
         .with_depth_stencil_state(
             DepthStencilState::default()
-            .with_enable_depth_test(true)
-            .with_enable_depth_write(true)
-            .with_compare_op(CompareOp::Less)
-            .with_enable_stencil_test(false)
+                .with_enable_depth_test(true)
+                .with_enable_depth_write(true)
+                .with_compare_op(CompareOp::Less)
+                .with_enable_stencil_test(false),
         )
         .build()?)
 }
 
-fn upload_data<T>(device: &Device, copy_pass: &CopyPass, vertex_buffer: &sdl3::gpu::Buffer, data: &[T]) -> Result<()> 
-    where T: Copy
+fn upload_data<T>(
+    device: &Device,
+    copy_pass: &CopyPass,
+    vertex_buffer: &sdl3::gpu::Buffer,
+    data: &[T],
+) -> Result<()>
+where
+    T: Copy,
 {
-    let size = (size_of::<T>() * data.len()) as u32;    
+    let size = (size_of::<T>() * data.len()) as u32;
     let transfer_buffer = device
         .create_transfer_buffer()
         .with_size(size)
@@ -394,11 +514,17 @@ fn upload_data<T>(device: &Device, copy_pass: &CopyPass, vertex_buffer: &sdl3::g
     Ok(())
 }
 
-fn upload_texture(device: &Device, copy_pass: &CopyPass, path: &str, texture: &Texture<'static>) -> Result<()> {
+fn upload_texture(
+    device: &Device,
+    copy_pass: &CopyPass,
+    path: &str,
+    texture: &Texture<'static>,
+) -> Result<()> {
     let i = image::open(path)?;
     let bytes = i.to_rgba8();
-    let transfer_buffer = device.create_transfer_buffer()
-        .with_size(i.width() * i.height() * 4 *size_of::<u8>() as u32)
+    let transfer_buffer = device
+        .create_transfer_buffer()
+        .with_size(i.width() * i.height() * 4 * size_of::<u8>() as u32)
         .with_usage(TransferBufferUsage::UPLOAD)
         .build()?;
     let mut memmap = transfer_buffer.map(device, false);
@@ -414,8 +540,9 @@ fn upload_texture(device: &Device, copy_pass: &CopyPass, path: &str, texture: &T
                 .with_height(32)
                 .with_width(32)
                 .with_layer(i)
-                .with_mip_level(0)
-        , false);
+                .with_mip_level(0),
+            false,
+        );
     }
     Ok(())
 }
