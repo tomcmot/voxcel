@@ -395,7 +395,7 @@ fn main() -> Result<()> {
 
         let obuffer = OutlineBuffer {
             color: Vec3::ZERO,
-            thickness: 1.05,
+            thickness: 0.05,
         };
 
         let mut cmdbuffer = device.acquire_command_buffer()?;

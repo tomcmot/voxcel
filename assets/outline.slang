@@ -24,7 +24,7 @@ cbuffer OutlineFrag {
 [shader("vertex")]
 float4 vertex(VertexInput v) : SV_Position
 {
-    float3 expanded = v.position * thickness;
+    float3 expanded = v.position + normalize(v.position) * thickness;
     float4 worldPos = mul(model, float4(expanded, 1.0));
     return mul(viewProj, worldPos);
 }
