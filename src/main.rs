@@ -2,17 +2,17 @@ use std::{ffi::CStr, fs};
 
 use anyhow::Result;
 use glam::{
-    Mat4, Vec2, Vec3,
-    camera::rh::{proj::directx, view::look_to_mat4},
+    Mat4, Vec2, Vec3, camera::rh::{proj::directx, view::look_to_mat4},
 };
 use sdl3::{
     event::Event,
     gpu::{
         BlendFactor, BlendOp, BufferBinding, BufferRegion, BufferUsageFlags, ColorTargetBlendState,
-        ColorTargetDescription, ColorTargetInfo, CompareOp, CopyPass, DepthStencilState,
-        DepthStencilTargetInfo, Device, GraphicsPipelineTargetInfo, IndexElementSize, LoadOp,
-        PrimitiveType, SampleCount, Sampler, SamplerCreateInfo, ShaderFormat, ShaderStage, StoreOp,
-        Texture, TextureCreateInfo, TextureFormat, TextureRegion, TextureSamplerBinding,
+        ColorTargetDescription, ColorTargetInfo, CommandBuffer, CompareOp, CopyPass, CullMode,
+        DepthStencilState, DepthStencilTargetInfo, Device, GraphicsPipeline,
+        GraphicsPipelineTargetInfo, IndexElementSize, LoadOp, PrimitiveType, RasterizerState,
+        RenderPass, SampleCount, Sampler, SamplerCreateInfo, Shader, ShaderFormat, ShaderStage,
+        StoreOp, Texture, TextureCreateInfo, TextureFormat, TextureRegion, TextureSamplerBinding,
         TextureTransferInfo, TextureType, TextureUsage, TransferBufferLocation,
         TransferBufferUsage, VertexAttribute, VertexBufferDescription,
         VertexElementFormat::{self},
@@ -28,7 +28,38 @@ use sdl3::{
 #[derive(Clone, Copy)]
 struct Vertex {
     position: Vec3,
-    uv: Vec3,
+    normal: Vec3,
+    uvw: Vec3,
+}
+
+impl Vertex {
+    fn buffer_desc() -> VertexBufferDescription {
+        VertexBufferDescription::default()
+            .with_slot(0)
+            .with_input_rate(sdl3::gpu::VertexInputRate::Vertex)
+            .with_instance_step_rate(0)
+            .with_pitch(size_of::<Vertex>() as u32)
+    }
+
+    fn attributes() -> Vec<VertexAttribute> {
+        vec![
+            VertexAttribute::default()
+                .with_buffer_slot(0)
+                .with_location(0)
+                .with_format(VertexElementFormat::Float3)
+                .with_offset(0),
+            VertexAttribute::default()
+                .with_buffer_slot(0)
+                .with_location(1)
+                .with_format(VertexElementFormat::Float3)
+                .with_offset((size_of::<f32>() * 3) as u32),
+            VertexAttribute::default()
+                .with_buffer_slot(0)
+                .with_location(2)
+                .with_format(VertexElementFormat::Float3)
+                .with_offset((size_of::<f32>() * 6) as u32),
+        ]
+    }
 }
 
 #[repr(C)]
@@ -47,6 +78,22 @@ struct Camera {
 struct CameraBuffer {
     proj_view: Mat4,
     model: Mat4,
+    normal: Mat4,
+}
+
+#[repr(C)]
+struct LightingBuffer {
+    ambient_color: Vec3,
+    band_count: f32,
+    light_dir: Vec3,
+    _pad0: f32,
+    light_color: Vec3,
+}
+
+#[repr(C)]
+struct OutlineBuffer {
+    color: Vec3,
+    thickness: f32,
 }
 
 impl Default for Camera {
@@ -96,19 +143,20 @@ impl Camera {
         .normalize();
     }
 }
-
-#[repr(C)]
-struct TimeUniform {
-    time: f32,
-}
-
+#[rustfmt::skip]
 const INDEXES: [u32; 36] = [
-    0, 1, 2, 2, 3, 1, 
-    4, 5, 6, 6, 7, 5, 
-    8, 9, 10, 10, 11, 9, 
-    12, 13, 14, 14, 15, 13, 
-    16, 17, 18, 18, 19, 17, 
-    20, 21, 22, 22, 23, 21,
+    // Top
+    0, 1, 2,   2, 1, 3,
+    // Bottom
+    4, 6, 5,   6, 7, 5,
+    // Front
+    8, 10, 9,  10, 11, 9,
+    // Back
+    12, 13, 14, 14, 13, 15,
+    // Left
+    16, 18, 17, 18, 19, 17,
+    // Right
+    20, 21, 22, 22, 21, 23,
 ];
 
 struct Mesh {
@@ -121,110 +169,134 @@ impl Mesh {
         let vertices = vec![
             Vertex {
                 position: Vec3::new(-0.5, 0.5, 0.5) + position,
-                uv: Vec3::new(0., 0., top),
+                normal: Vec3::new(0., 1., 0.),
+                uvw: Vec3::new(0., 0., top),
             }, // Top Left Front
             Vertex {
                 position: Vec3::new(0.5, 0.5, 0.5) + position,
-                uv: Vec3::new(1., 0., top),
+                normal: Vec3::new(0., 1., 0.),
+                uvw: Vec3::new(1., 0., top),
             }, // Top Right Front
             Vertex {
                 position: Vec3::new(-0.5, 0.5, -0.5) + position,
-                uv: Vec3::new(0., 1., top),
+                normal: Vec3::new(0., 1., 0.),
+                uvw: Vec3::new(0., 1., top),
             }, // Top Left Back
             Vertex {
                 position: Vec3::new(0.5, 0.5, -0.5) + position,
-                uv: Vec3::new(1., 1., top),
+                normal: Vec3::new(0., 1., 0.),
+                uvw: Vec3::new(1., 1., top),
             }, // Top Right Back
             Vertex {
                 position: Vec3::new(-0.5, -0.5, 0.5) + position,
-                uv: Vec3::new(0., 0., bottom),
+                normal: Vec3::new(0., -1., 0.),
+                uvw: Vec3::new(0., 0., bottom),
             }, // Bottom Left Front
             Vertex {
                 position: Vec3::new(0.5, -0.5, 0.5) + position,
-                uv: Vec3::new(1., 0., bottom),
+                normal: Vec3::new(0., -1., 0.),
+                uvw: Vec3::new(1., 0., bottom),
             }, // Bottom Right Front
             Vertex {
                 position: Vec3::new(-0.5, -0.5, -0.5) + position,
-                uv: Vec3::new(0., 1., bottom),
+                normal: Vec3::new(0., -1., 0.),
+                uvw: Vec3::new(0., 1., bottom),
             }, // Bottom Left Back
             Vertex {
                 position: Vec3::new(0.5, -0.5, -0.5) + position,
-                uv: Vec3::new(1., 1., bottom),
+                normal: Vec3::new(0., -1., 0.),
+                uvw: Vec3::new(1., 1., bottom),
             }, // Bottom Right Back
             Vertex {
                 position: Vec3::new(-0.5, 0.5, 0.5) + position,
-                uv: Vec3::new(0., 0., sides),
+                normal: Vec3::new(0., 0., 1.),
+                uvw: Vec3::new(0., 0., sides),
             }, // Top Left Front
             Vertex {
                 position: Vec3::new(0.5, 0.5, 0.5) + position,
-                uv: Vec3::new(1., 0., sides),
+                normal: Vec3::new(0., 0., 1.),
+                uvw: Vec3::new(1., 0., sides),
             }, // Top Right Front
             Vertex {
                 position: Vec3::new(-0.5, -0.5, 0.5) + position,
-                uv: Vec3::new(0., 1., sides),
+                normal: Vec3::new(0., 0., 1.),
+                uvw: Vec3::new(0., 1., sides),
             }, // Bottom Left Front
             Vertex {
                 position: Vec3::new(0.5, -0.5, 0.5) + position,
-                uv: Vec3::new(1., 1., sides),
+                normal: Vec3::new(0., 0., 1.),
+                uvw: Vec3::new(1., 1., sides),
             }, // Bottom Right Front
             Vertex {
                 position: Vec3::new(-0.5, 0.5, -0.5) + position,
-                uv: Vec3::new(1., 0., sides),
+                normal: Vec3::new(0., 0., -1.),
+                uvw: Vec3::new(1., 0., sides),
             }, // Top Left Back
             Vertex {
                 position: Vec3::new(0.5, 0.5, -0.5) + position,
-                uv: Vec3::new(0., 0., sides),
+                normal: Vec3::new(0., 0., -1.),
+                uvw: Vec3::new(0., 0., sides),
             }, // Top Right Back
             Vertex {
                 position: Vec3::new(-0.5, -0.5, -0.5) + position,
-                uv: Vec3::new(1., 1., sides),
+                normal: Vec3::new(0., 0., -1.),
+                uvw: Vec3::new(1., 1., sides),
             }, // Bottom Left Back
             Vertex {
                 position: Vec3::new(0.5, -0.5, -0.5) + position,
-                uv: Vec3::new(0., 1., sides),
+                normal: Vec3::new(0., 0., -1.),
+                uvw: Vec3::new(0., 1., sides),
             }, // Bottom Right Back
             Vertex {
                 position: Vec3::new(-0.5, 0.5, 0.5) + position,
-                uv: Vec3::new(1., 0., sides),
+                normal: Vec3::new(-1., 0., 0.),
+                uvw: Vec3::new(1., 0., sides),
             }, // Top Left Front
             Vertex {
                 position: Vec3::new(-0.5, -0.5, 0.5) + position,
-                uv: Vec3::new(1., 1., sides),
+                normal: Vec3::new(-1., 0., 0.),
+                uvw: Vec3::new(1., 1., sides),
             }, // Bottom Left Front
             Vertex {
                 position: Vec3::new(-0.5, 0.5, -0.5) + position,
-                uv: Vec3::new(0., 0., sides),
+                normal: Vec3::new(-1., 0., 0.),
+                uvw: Vec3::new(0., 0., sides),
             }, // Top Left Back
             Vertex {
                 position: Vec3::new(-0.5, -0.5, -0.5) + position,
-                uv: Vec3::new(0., 1., sides),
+                normal: Vec3::new(-1., 0., 0.),
+                uvw: Vec3::new(0., 1., sides),
             }, // Bottom Left Back
             Vertex {
                 position: Vec3::new(0.5, 0.5, 0.5) + position,
-                uv: Vec3::new(0., 0., sides),
+                normal: Vec3::new(1., 0., 0.),
+                uvw: Vec3::new(0., 0., sides),
             }, // Top Right Front
             Vertex {
                 position: Vec3::new(0.5, -0.5, 0.5) + position,
-                uv: Vec3::new(0., 1., sides),
+                normal: Vec3::new(1., 0., 0.),
+                uvw: Vec3::new(0., 1., sides),
             }, // Bottom Right Front
             Vertex {
                 position: Vec3::new(0.5, 0.5, -0.5) + position,
-                uv: Vec3::new(1., 0., sides),
+                normal: Vec3::new(1., 0., 0.),
+                uvw: Vec3::new(1., 0., sides),
             }, // Top Right Back
             Vertex {
                 position: Vec3::new(0.5, -0.5, -0.5) + position,
-                uv: Vec3::new(1., 1., sides),
+                normal: Vec3::new(1., 0., 0.),
+                uvw: Vec3::new(1., 1., sides),
             }, // Bottom Right Back
         ];
         Mesh {
             vertices: vertices,
-            indexes: INDEXES.map(|i| i + (index * 36)).to_vec(),
+            indexes: INDEXES.map(|i| i + (index * 24)).to_vec(),
         }
     }
 }
 
 // todo these constants should be swapped to be queried at runtime
-const SHADER_PATH: &'static str = "slang.spv";
+const SHADER_PATH: &'static str = "assets/";
 const WINDOW_WIDTH: u32 = 800;
 const WINDOW_HEIGHT: u32 = 600;
 const TEXTURE_PATH: &'static str = "assets/blocks.png";
@@ -246,11 +318,17 @@ fn main() -> Result<()> {
         .with_size((mesh.vertices.len() * size_of::<Vertex>()) as u32)
         .with_usage(BufferUsageFlags::VERTEX)
         .build()?;
+    let bindings = [BufferBinding::default()
+        .with_buffer(&vertex_buffer)
+        .with_offset(0)];
     let index_buffer = device
         .create_buffer()
         .with_size((mesh.indexes.len() * size_of::<u32>()) as u32)
         .with_usage(BufferUsageFlags::INDEX)
         .build()?;
+    let index_binding = BufferBinding::default()
+        .with_buffer(&index_buffer)
+        .with_offset(0);
     let (texture, sampler) = create_texture_sampler(&device)?;
     {
         let copy_commands = device.acquire_command_buffer()?;
@@ -261,16 +339,20 @@ fn main() -> Result<()> {
         device.end_copy_pass(copy_pass);
         let _ = copy_commands.submit()?;
     };
+
+    let tex_samp_bind = [TextureSamplerBinding::default()
+        .with_sampler(&sampler)
+        .with_texture(&texture)];
     let (_depth_texture, depth_info) = create_depth_texture(&device)?;
-    let pipeline = create_pipeline(&window, &device, SHADER_PATH)?;
-    let mut time = TimeUniform { time: 0. };
+    let pipeline = Renderer::new(&window, &device, SHADER_PATH.into())?;
+    let mut time = 0.;
     let mut event_pump = sdl.event_pump()?;
     let mut camera = Camera::default();
     'game: loop {
         let current_time = unsafe { SDL_GetTicksNS() } as f32 / 1e9;
-        let delta = current_time - time.time;
+        let delta = current_time - time;
         let look_sensitivity = 1. * delta;
-        time.time = current_time;
+        time = current_time;
         for event in event_pump.poll_iter() {
             match event {
                 Event::Quit { .. }
@@ -296,6 +378,26 @@ fn main() -> Result<()> {
             }
         }
         keyboard_event_handler(&event_pump, &mut camera, delta);
+
+        let cbuffer = CameraBuffer {
+            proj_view: camera.projection(WINDOW_WIDTH as f32, WINDOW_HEIGHT as f32) * camera.view(),
+            model: Mat4::IDENTITY,
+            normal: Mat4::IDENTITY
+        };
+
+        let lbuffer = LightingBuffer {
+            ambient_color: Vec3::new(0.25, 0.25, 0.5),
+            band_count: 5.,
+            light_dir: Vec3::new(0.4, 0.8, 0.5),
+            _pad0: 0.,
+            light_color: Vec3::new(1., 1., 0.8),
+        };
+
+        let obuffer = OutlineBuffer {
+            color: Vec3::ZERO,
+            thickness: 1.05,
+        };
+
         let mut cmdbuffer = device.acquire_command_buffer()?;
         let swapchain_texture = cmdbuffer.wait_and_acquire_swapchain_texture(&window)?;
         let color_target = ColorTargetInfo::default()
@@ -306,28 +408,16 @@ fn main() -> Result<()> {
 
         let render_pass =
             device.begin_render_pass(&cmdbuffer, &[color_target], Some(&depth_info))?;
-        render_pass.bind_graphics_pipeline(&pipeline);
-        let cbuffer = CameraBuffer {
-            proj_view: camera.projection(WINDOW_WIDTH as f32, WINDOW_HEIGHT as f32) * camera.view(),
-            model: Mat4::IDENTITY,
-        };
-        cmdbuffer.push_vertex_uniform_data(0, &cbuffer);
-        cmdbuffer.push_fragment_uniform_data(0, &time);
-        let bindings = [BufferBinding::default()
-            .with_buffer(&vertex_buffer)
-            .with_offset(0)];
-        render_pass.bind_vertex_buffers(0, &bindings);
-        render_pass.bind_index_buffer(
-            &BufferBinding::default()
-                .with_buffer(&index_buffer)
-                .with_offset(0),
-            IndexElementSize::_32BIT,
+        pipeline.draw(
+            &cmdbuffer,
+            &render_pass,
+            &cbuffer,
+            &lbuffer,
+            &obuffer,
+            &bindings,
+            &index_binding,
+            &tex_samp_bind,
         );
-        let tex_samp_bind = TextureSamplerBinding::default()
-            .with_sampler(&sampler)
-            .with_texture(&texture);
-        render_pass.bind_fragment_samplers(0, &[tex_samp_bind]);
-        render_pass.draw_indexed_primitives(INDEXES.len() as u32, 1, 0, 0, 0);
         device.end_render_pass(render_pass);
         let _ = cmdbuffer.submit()?;
     }
@@ -391,7 +481,7 @@ struct ShaderDesc {
 }
 
 const VERTEX_SHADER: ShaderDesc = ShaderDesc {
-    entry_point: c"vertMain",
+    entry_point: c"vertex",
     samplers: 0,
     uniform_buffers: 1,
     storage_buffers: 0,
@@ -399,90 +489,155 @@ const VERTEX_SHADER: ShaderDesc = ShaderDesc {
 };
 
 const FRAG_SHADER: ShaderDesc = ShaderDesc {
-    entry_point: c"fragMain",
+    entry_point: c"fragment",
     samplers: 1,
     uniform_buffers: 1,
     storage_buffers: 0,
     storage_textures: 0,
 };
 
-fn create_pipeline(
-    window: &Window,
-    device: &Device,
-    path: &str,
-) -> Result<sdl3::gpu::GraphicsPipeline, anyhow::Error> {
+const VERT_OUTLINE: ShaderDesc = ShaderDesc {
+    entry_point: c"vertex",
+    samplers: 0,
+    uniform_buffers: 2,
+    storage_buffers: 0,
+    storage_textures: 0,
+};
+
+const FRAG_OUTLINE: ShaderDesc = ShaderDesc {
+    entry_point: c"fragment",
+    samplers: 0,
+    uniform_buffers: 1,
+    storage_buffers: 0,
+    storage_textures: 0,
+};
+
+fn create_shaders(device: &Device, path: String, vert: ShaderDesc, frag: ShaderDesc) -> Result<(Shader, Shader)> {
     let code = fs::read(path)?;
     let vertex_shader = device
         .create_shader()
         .with_code(ShaderFormat::SPIRV, code.as_slice(), ShaderStage::Vertex)
-        .with_entrypoint(VERTEX_SHADER.entry_point)
-        .with_samplers(VERTEX_SHADER.samplers)
-        .with_uniform_buffers(VERTEX_SHADER.uniform_buffers)
-        .with_storage_textures(VERTEX_SHADER.storage_textures)
-        .with_storage_buffers(VERTEX_SHADER.storage_buffers)
+        .with_entrypoint(vert.entry_point)
+        .with_samplers(vert.samplers)
+        .with_uniform_buffers(vert.uniform_buffers)
+        .with_storage_textures(vert.storage_textures)
+        .with_storage_buffers(vert.storage_buffers)
         .build()?;
     let frag_shader = device
         .create_shader()
         .with_code(ShaderFormat::SPIRV, code.as_slice(), ShaderStage::Fragment)
-        .with_entrypoint(FRAG_SHADER.entry_point)
-        .with_samplers(FRAG_SHADER.samplers)
-        .with_uniform_buffers(FRAG_SHADER.uniform_buffers)
-        .with_storage_textures(FRAG_SHADER.storage_textures)
-        .with_storage_buffers(FRAG_SHADER.storage_buffers)
+        .with_entrypoint(frag.entry_point)
+        .with_samplers(frag.samplers)
+        .with_uniform_buffers(frag.uniform_buffers)
+        .with_storage_textures(frag.storage_textures)
+        .with_storage_buffers(frag.storage_buffers)
         .build()?;
-    let vertex_buffer_desc = VertexBufferDescription::default()
-        .with_slot(0)
-        .with_input_rate(sdl3::gpu::VertexInputRate::Vertex)
-        .with_instance_step_rate(0)
-        .with_pitch(size_of::<Vertex>() as u32);
-    let vertex_attrib = [
-        VertexAttribute::default()
-            .with_buffer_slot(0)
-            .with_location(0)
-            .with_format(VertexElementFormat::Float3)
-            .with_offset(0),
-        VertexAttribute::default()
-            .with_buffer_slot(0)
-            .with_location(1)
-            .with_format(VertexElementFormat::Float3)
-            .with_offset((size_of::<f32>() * 3) as u32),
-    ];
-    let color_target = ColorTargetDescription::default()
-        .with_blend_state(
-            ColorTargetBlendState::new()
-                .with_enable_blend(true)
-                .with_color_blend_op(BlendOp::Add)
-                .with_alpha_blend_op(BlendOp::Add)
-                .with_src_color_blendfactor(BlendFactor::SrcAlpha)
-                .with_dst_color_blendfactor(BlendFactor::OneMinusSrcAlpha)
-                .with_src_alpha_blendfactor(BlendFactor::SrcAlpha)
-                .with_dst_alpha_blendfactor(BlendFactor::OneMinusSrcAlpha),
-        )
-        .with_format(device.get_swapchain_texture_format(window));
-    Ok(device
-        .create_graphics_pipeline()
-        .with_vertex_shader(&vertex_shader)
-        .with_fragment_shader(&frag_shader)
-        .with_primitive_type(PrimitiveType::TriangleList)
-        .with_vertex_input_state(
-            VertexInputState::default()
-                .with_vertex_buffer_descriptions(&[vertex_buffer_desc])
-                .with_vertex_attributes(&vertex_attrib),
-        )
-        .with_target_info(
-            GraphicsPipelineTargetInfo::new()
-                .with_color_target_descriptions(&[color_target])
-                .with_has_depth_stencil_target(true)
-                .with_depth_stencil_format(TextureFormat::D32Float),
-        )
-        .with_depth_stencil_state(
-            DepthStencilState::default()
-                .with_enable_depth_test(true)
-                .with_enable_depth_write(true)
-                .with_compare_op(CompareOp::Less)
-                .with_enable_stencil_test(false),
-        )
-        .build()?)
+    Ok((vertex_shader, frag_shader))
+}
+
+struct Renderer {
+    main: GraphicsPipeline,
+    outline: GraphicsPipeline,
+}
+
+impl Renderer {
+    fn new(window: &Window, device: &Device, path: String) -> Result<Self> {
+        let (vertex_shader, frag_shader) = create_shaders(device, path.clone() + "main.spv", VERTEX_SHADER, FRAG_SHADER)?;
+        let color_target = [ColorTargetDescription::default()
+            .with_blend_state(
+                ColorTargetBlendState::new()
+                    .with_enable_blend(true)
+                    .with_color_blend_op(BlendOp::Add)
+                    .with_alpha_blend_op(BlendOp::Add)
+                    .with_src_color_blendfactor(BlendFactor::SrcAlpha)
+                    .with_dst_color_blendfactor(BlendFactor::OneMinusSrcAlpha)
+                    .with_src_alpha_blendfactor(BlendFactor::SrcAlpha)
+                    .with_dst_alpha_blendfactor(BlendFactor::OneMinusSrcAlpha),
+            )
+            .with_format(device.get_swapchain_texture_format(window))];
+        let target_info = GraphicsPipelineTargetInfo::new()
+            .with_color_target_descriptions(&color_target)
+            .with_has_depth_stencil_target(true)
+            .with_depth_stencil_format(TextureFormat::D32Float);
+        let main = device
+            .create_graphics_pipeline()
+            .with_vertex_shader(&vertex_shader)
+            .with_fragment_shader(&frag_shader)
+            .with_primitive_type(PrimitiveType::TriangleList)
+            .with_vertex_input_state(
+                VertexInputState::default()
+                    .with_vertex_buffer_descriptions(&[Vertex::buffer_desc()])
+                    .with_vertex_attributes(Vertex::attributes().as_slice()),
+            )
+            .with_target_info(target_info)
+            .with_depth_stencil_state(
+                DepthStencilState::default()
+                    .with_enable_depth_test(true)
+                    .with_enable_depth_write(true)
+                    .with_compare_op(CompareOp::Less)
+                    .with_enable_stencil_test(false),
+            )
+            .build()?;
+
+        //
+        // outline pipeline
+        //
+        let outline_target_info = GraphicsPipelineTargetInfo::new()
+            .with_color_target_descriptions(&color_target)
+            .with_has_depth_stencil_target(true)
+            .with_depth_stencil_format(TextureFormat::D32Float);
+
+        let (vertex_shader, frag_shader) = create_shaders(device, path + "/outline.spv", VERT_OUTLINE, FRAG_OUTLINE)?;
+        let outline = device
+            .create_graphics_pipeline()
+            .with_vertex_shader(&vertex_shader)
+            .with_fragment_shader(&frag_shader)
+            .with_primitive_type(PrimitiveType::TriangleList)
+            .with_vertex_input_state(
+                VertexInputState::default()
+                    .with_vertex_buffer_descriptions(&[Vertex::buffer_desc()])
+                    .with_vertex_attributes(Vertex::attributes().as_slice()),
+            )
+            .with_target_info(outline_target_info)
+            .with_rasterizer_state(RasterizerState::default().with_cull_mode(CullMode::Front))
+            .build()?;
+
+        Ok(Renderer { main, outline })
+    }
+
+    fn draw(
+        &self,
+        cmdbuffer: &CommandBuffer,
+        render_pass: &RenderPass,
+        camera_buffer: &CameraBuffer,
+        light_buffer: &LightingBuffer,
+        outline_buffer: &OutlineBuffer,
+        bindings: &[BufferBinding],
+        index_binding: &BufferBinding,
+        tex_samp_bind: &[TextureSamplerBinding<'_>],
+    ) {
+        //
+        // outline
+        //
+        render_pass.bind_graphics_pipeline(&self.outline);
+        cmdbuffer.push_vertex_uniform_data(0, camera_buffer);
+        cmdbuffer.push_vertex_uniform_data(1, &outline_buffer.thickness);
+        cmdbuffer.push_fragment_uniform_data(0, &outline_buffer.color);
+        render_pass.bind_vertex_buffers(0, bindings);
+        render_pass.bind_index_buffer(index_binding, IndexElementSize::_32BIT);
+        render_pass.draw_indexed_primitives(INDEXES.len() as u32, 1, 0, 0, 0);
+        //
+        // main
+        //
+        render_pass.bind_graphics_pipeline(&self.main);
+        cmdbuffer.push_vertex_uniform_data(0, camera_buffer);
+        cmdbuffer.push_fragment_uniform_data(0, light_buffer);
+        render_pass.bind_vertex_buffers(0, bindings);
+        render_pass.bind_index_buffer(index_binding, IndexElementSize::_32BIT);
+        render_pass.bind_fragment_samplers(0, tex_samp_bind);
+        render_pass.draw_indexed_primitives(INDEXES.len() as u32, 1, 0, 0, 0);
+
+    }
 }
 
 fn upload_data<T>(
