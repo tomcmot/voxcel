@@ -4,6 +4,7 @@ use anyhow::Result;
 use glam::{
     Mat4, Vec2, Vec3, camera::rh::{proj::directx, view::look_to_mat4},
 };
+use imgui::Key::D;
 use sdl3::{
     event::Event,
     gpu::{
@@ -23,6 +24,8 @@ use sdl3::{
     sys::timer::SDL_GetTicksNS,
     video::Window,
 };
+
+mod ui;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -302,7 +305,7 @@ const WINDOW_HEIGHT: u32 = 600;
 const TEXTURE_PATH: &'static str = "assets/blocks.png";
 fn main() -> Result<()> {
     let _ = sdl3::hint::set(sdl3::hint::names::RENDER_VULKAN_DEBUG, "1");
-    let sdl = sdl3::init()?;
+    let mut sdl = sdl3::init()?;
     let video = sdl.video()?;
     let mut window = video
         .window("voxcell", WINDOW_WIDTH, WINDOW_HEIGHT)
@@ -312,6 +315,8 @@ fn main() -> Result<()> {
     window.set_mouse_grab(true);
     sdl.mouse().set_relative_mouse_mode(&window, true);
     let device = Device::new(ShaderFormat::SPIRV, true)?.with_window(&window)?;
+    device.set_swapchain_parameters(&window, sdl3::gpu::PresentMode::Immediate, sdl3::gpu::SwapchainComposition::Sdr)?;
+    let mut ui = ui::UI::new(&device, &window);
     let mesh = Mesh::new(Vec3::ZERO, 0, 0., 2., 1.);
     let vertex_buffer = device
         .create_buffer()
@@ -348,10 +353,11 @@ fn main() -> Result<()> {
     let mut time = 0.;
     let mut event_pump = sdl.event_pump()?;
     let mut camera = Camera::default();
+    
     'game: loop {
         let current_time = unsafe { SDL_GetTicksNS() } as f32 / 1e9;
         let delta = current_time - time;
-        let look_sensitivity = 1. * delta;
+        let look_sensitivity = 100. * delta;
         time = current_time;
         for event in event_pump.poll_iter() {
             match event {
@@ -400,14 +406,19 @@ fn main() -> Result<()> {
 
         let mut cmdbuffer = device.acquire_command_buffer()?;
         let swapchain_texture = cmdbuffer.wait_and_acquire_swapchain_texture(&window)?;
-        let color_target = ColorTargetInfo::default()
+        let color_target = [ColorTargetInfo::default()
             .with_clear_color(Color::RGB(50, 100, 200))
             .with_load_op(LoadOp::CLEAR)
             .with_store_op(StoreOp::STORE)
-            .with_texture(&swapchain_texture);
+            .with_texture(&swapchain_texture)];
 
+        let color_target2 = [ColorTargetInfo::default()
+            .with_clear_color(Color::RGB(50, 100, 200))
+            .with_load_op(LoadOp::LOAD)
+            .with_store_op(StoreOp::STORE)
+            .with_texture(&swapchain_texture)];
         let render_pass =
-            device.begin_render_pass(&cmdbuffer, &[color_target], Some(&depth_info))?;
+            device.begin_render_pass(&cmdbuffer, &color_target, Some(&depth_info))?;
         pipeline.draw(
             &cmdbuffer,
             &render_pass,
@@ -419,6 +430,9 @@ fn main() -> Result<()> {
             &tex_samp_bind,
         );
         device.end_render_pass(render_pass);
+        ui.render(&mut sdl, &device, &window, &event_pump, &mut cmdbuffer, &color_target2, |ui| {
+            ui::fps(ui, 1.0/delta);
+        });
         let _ = cmdbuffer.submit()?;
     }
     Ok(())
