@@ -4,7 +4,6 @@ use anyhow::Result;
 use glam::{
     Mat4, Vec2, Vec3, camera::rh::{proj::directx, view::look_to_mat4},
 };
-use imgui::Key::D;
 use sdl3::{
     event::Event,
     gpu::{
@@ -15,9 +14,7 @@ use sdl3::{
         RenderPass, SampleCount, Sampler, SamplerCreateInfo, Shader, ShaderFormat, ShaderStage,
         StoreOp, Texture, TextureCreateInfo, TextureFormat, TextureRegion, TextureSamplerBinding,
         TextureTransferInfo, TextureType, TextureUsage, TransferBufferLocation,
-        TransferBufferUsage, VertexAttribute, VertexBufferDescription,
-        VertexElementFormat::{self},
-        VertexInputState,
+        TransferBufferUsage, VertexInputState,
     },
     keyboard::{Keycode, Scancode},
     pixels::Color,
@@ -25,45 +22,12 @@ use sdl3::{
     video::Window,
 };
 
+mod chunk;
 mod ui;
 
-#[repr(C)]
-#[derive(Clone, Copy)]
-struct Vertex {
-    position: Vec3,
-    normal: Vec3,
-    uvw: Vec3,
-}
+use chunk::Vertex;
 
-impl Vertex {
-    fn buffer_desc() -> VertexBufferDescription {
-        VertexBufferDescription::default()
-            .with_slot(0)
-            .with_input_rate(sdl3::gpu::VertexInputRate::Vertex)
-            .with_instance_step_rate(0)
-            .with_pitch(size_of::<Vertex>() as u32)
-    }
-
-    fn attributes() -> Vec<VertexAttribute> {
-        vec![
-            VertexAttribute::default()
-                .with_buffer_slot(0)
-                .with_location(0)
-                .with_format(VertexElementFormat::Float3)
-                .with_offset(0),
-            VertexAttribute::default()
-                .with_buffer_slot(0)
-                .with_location(1)
-                .with_format(VertexElementFormat::Float3)
-                .with_offset((size_of::<f32>() * 3) as u32),
-            VertexAttribute::default()
-                .with_buffer_slot(0)
-                .with_location(2)
-                .with_format(VertexElementFormat::Float3)
-                .with_offset((size_of::<f32>() * 6) as u32),
-        ]
-    }
-}
+use crate::chunk::Chunk;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -146,157 +110,6 @@ impl Camera {
         .normalize();
     }
 }
-#[rustfmt::skip]
-const INDEXES: [u32; 36] = [
-    // Top
-    0, 1, 2,   2, 1, 3,
-    // Bottom
-    4, 6, 5,   6, 7, 5,
-    // Front
-    8, 10, 9,  10, 11, 9,
-    // Back
-    12, 13, 14, 14, 13, 15,
-    // Left
-    16, 18, 17, 18, 19, 17,
-    // Right
-    20, 21, 22, 22, 21, 23,
-];
-
-struct Mesh {
-    vertices: Vec<Vertex>,
-    indexes: Vec<u32>,
-}
-
-impl Mesh {
-    fn new(position: Vec3, index: u32, top: f32, bottom: f32, sides: f32) -> Self {
-        let vertices = vec![
-            Vertex {
-                position: Vec3::new(-0.5, 0.5, 0.5) + position,
-                normal: Vec3::new(0., 1., 0.),
-                uvw: Vec3::new(0., 0., top),
-            }, // Top Left Front
-            Vertex {
-                position: Vec3::new(0.5, 0.5, 0.5) + position,
-                normal: Vec3::new(0., 1., 0.),
-                uvw: Vec3::new(1., 0., top),
-            }, // Top Right Front
-            Vertex {
-                position: Vec3::new(-0.5, 0.5, -0.5) + position,
-                normal: Vec3::new(0., 1., 0.),
-                uvw: Vec3::new(0., 1., top),
-            }, // Top Left Back
-            Vertex {
-                position: Vec3::new(0.5, 0.5, -0.5) + position,
-                normal: Vec3::new(0., 1., 0.),
-                uvw: Vec3::new(1., 1., top),
-            }, // Top Right Back
-            Vertex {
-                position: Vec3::new(-0.5, -0.5, 0.5) + position,
-                normal: Vec3::new(0., -1., 0.),
-                uvw: Vec3::new(0., 0., bottom),
-            }, // Bottom Left Front
-            Vertex {
-                position: Vec3::new(0.5, -0.5, 0.5) + position,
-                normal: Vec3::new(0., -1., 0.),
-                uvw: Vec3::new(1., 0., bottom),
-            }, // Bottom Right Front
-            Vertex {
-                position: Vec3::new(-0.5, -0.5, -0.5) + position,
-                normal: Vec3::new(0., -1., 0.),
-                uvw: Vec3::new(0., 1., bottom),
-            }, // Bottom Left Back
-            Vertex {
-                position: Vec3::new(0.5, -0.5, -0.5) + position,
-                normal: Vec3::new(0., -1., 0.),
-                uvw: Vec3::new(1., 1., bottom),
-            }, // Bottom Right Back
-            Vertex {
-                position: Vec3::new(-0.5, 0.5, 0.5) + position,
-                normal: Vec3::new(0., 0., 1.),
-                uvw: Vec3::new(0., 0., sides),
-            }, // Top Left Front
-            Vertex {
-                position: Vec3::new(0.5, 0.5, 0.5) + position,
-                normal: Vec3::new(0., 0., 1.),
-                uvw: Vec3::new(1., 0., sides),
-            }, // Top Right Front
-            Vertex {
-                position: Vec3::new(-0.5, -0.5, 0.5) + position,
-                normal: Vec3::new(0., 0., 1.),
-                uvw: Vec3::new(0., 1., sides),
-            }, // Bottom Left Front
-            Vertex {
-                position: Vec3::new(0.5, -0.5, 0.5) + position,
-                normal: Vec3::new(0., 0., 1.),
-                uvw: Vec3::new(1., 1., sides),
-            }, // Bottom Right Front
-            Vertex {
-                position: Vec3::new(-0.5, 0.5, -0.5) + position,
-                normal: Vec3::new(0., 0., -1.),
-                uvw: Vec3::new(1., 0., sides),
-            }, // Top Left Back
-            Vertex {
-                position: Vec3::new(0.5, 0.5, -0.5) + position,
-                normal: Vec3::new(0., 0., -1.),
-                uvw: Vec3::new(0., 0., sides),
-            }, // Top Right Back
-            Vertex {
-                position: Vec3::new(-0.5, -0.5, -0.5) + position,
-                normal: Vec3::new(0., 0., -1.),
-                uvw: Vec3::new(1., 1., sides),
-            }, // Bottom Left Back
-            Vertex {
-                position: Vec3::new(0.5, -0.5, -0.5) + position,
-                normal: Vec3::new(0., 0., -1.),
-                uvw: Vec3::new(0., 1., sides),
-            }, // Bottom Right Back
-            Vertex {
-                position: Vec3::new(-0.5, 0.5, 0.5) + position,
-                normal: Vec3::new(-1., 0., 0.),
-                uvw: Vec3::new(1., 0., sides),
-            }, // Top Left Front
-            Vertex {
-                position: Vec3::new(-0.5, -0.5, 0.5) + position,
-                normal: Vec3::new(-1., 0., 0.),
-                uvw: Vec3::new(1., 1., sides),
-            }, // Bottom Left Front
-            Vertex {
-                position: Vec3::new(-0.5, 0.5, -0.5) + position,
-                normal: Vec3::new(-1., 0., 0.),
-                uvw: Vec3::new(0., 0., sides),
-            }, // Top Left Back
-            Vertex {
-                position: Vec3::new(-0.5, -0.5, -0.5) + position,
-                normal: Vec3::new(-1., 0., 0.),
-                uvw: Vec3::new(0., 1., sides),
-            }, // Bottom Left Back
-            Vertex {
-                position: Vec3::new(0.5, 0.5, 0.5) + position,
-                normal: Vec3::new(1., 0., 0.),
-                uvw: Vec3::new(0., 0., sides),
-            }, // Top Right Front
-            Vertex {
-                position: Vec3::new(0.5, -0.5, 0.5) + position,
-                normal: Vec3::new(1., 0., 0.),
-                uvw: Vec3::new(0., 1., sides),
-            }, // Bottom Right Front
-            Vertex {
-                position: Vec3::new(0.5, 0.5, -0.5) + position,
-                normal: Vec3::new(1., 0., 0.),
-                uvw: Vec3::new(1., 0., sides),
-            }, // Top Right Back
-            Vertex {
-                position: Vec3::new(0.5, -0.5, -0.5) + position,
-                normal: Vec3::new(1., 0., 0.),
-                uvw: Vec3::new(1., 1., sides),
-            }, // Bottom Right Back
-        ];
-        Mesh {
-            vertices: vertices,
-            indexes: INDEXES.map(|i| i + (index * 24)).to_vec(),
-        }
-    }
-}
 
 // todo these constants should be swapped to be queried at runtime
 const SHADER_PATH: &'static str = "assets/";
@@ -317,10 +130,10 @@ fn main() -> Result<()> {
     let device = Device::new(ShaderFormat::SPIRV, true)?.with_window(&window)?;
     device.set_swapchain_parameters(&window, sdl3::gpu::PresentMode::Immediate, sdl3::gpu::SwapchainComposition::Sdr)?;
     let mut ui = ui::UI::new(&device, &window);
-    let mesh = Mesh::new(Vec3::ZERO, 0, 0., 2., 1.);
+    let chunk = Chunk::new(0, Vec3::ZERO);
     let vertex_buffer = device
         .create_buffer()
-        .with_size((mesh.vertices.len() * size_of::<Vertex>()) as u32)
+        .with_size((chunk.vertices.len() * size_of::<Vertex>()) as u32)
         .with_usage(BufferUsageFlags::VERTEX)
         .build()?;
     let bindings = [BufferBinding::default()
@@ -328,7 +141,7 @@ fn main() -> Result<()> {
         .with_offset(0)];
     let index_buffer = device
         .create_buffer()
-        .with_size((mesh.indexes.len() * size_of::<u32>()) as u32)
+        .with_size((chunk.indices.len() * size_of::<u32>()) as u32)
         .with_usage(BufferUsageFlags::INDEX)
         .build()?;
     let index_binding = BufferBinding::default()
@@ -338,8 +151,8 @@ fn main() -> Result<()> {
     {
         let copy_commands = device.acquire_command_buffer()?;
         let copy_pass = device.begin_copy_pass(&copy_commands)?;
-        upload_data(&device, &copy_pass, &vertex_buffer, &mesh.vertices)?;
-        upload_data(&device, &copy_pass, &index_buffer, &mesh.indexes)?;
+        upload_data(&device, &copy_pass, &vertex_buffer, &chunk.vertices)?;
+        upload_data(&device, &copy_pass, &index_buffer, &chunk.indices)?;
         upload_texture(&device, &copy_pass, TEXTURE_PATH, &texture)?;
         device.end_copy_pass(copy_pass);
         let _ = copy_commands.submit()?;
@@ -428,6 +241,7 @@ fn main() -> Result<()> {
             &bindings,
             &index_binding,
             &tex_samp_bind,
+            &chunk
         );
         device.end_render_pass(render_pass);
         ui.render(&mut sdl, &device, &window, &event_pump, &mut cmdbuffer, &color_target2, |ui| {
@@ -456,7 +270,7 @@ fn keyboard_event_handler(event_pump: &sdl3::EventPump, camera: &mut Camera, del
             0.
         },
     )
-    .normalize_or_zero();
+    .normalize_or_zero() * 10.;
     camera.move_to(
         camera.position
             + (camera.front * camera_motion.x * delta)
@@ -629,6 +443,7 @@ impl Renderer {
         bindings: &[BufferBinding],
         index_binding: &BufferBinding,
         tex_samp_bind: &[TextureSamplerBinding<'_>],
+        chunk: &Chunk
     ) {
         //
         // outline
@@ -639,7 +454,7 @@ impl Renderer {
         cmdbuffer.push_fragment_uniform_data(0, &outline_buffer.color);
         render_pass.bind_vertex_buffers(0, bindings);
         render_pass.bind_index_buffer(index_binding, IndexElementSize::_32BIT);
-        render_pass.draw_indexed_primitives(INDEXES.len() as u32, 1, 0, 0, 0);
+        render_pass.draw_indexed_primitives(chunk.indices.len() as u32, 1, 0, 0, 0);
         //
         // main
         //
@@ -649,7 +464,7 @@ impl Renderer {
         render_pass.bind_vertex_buffers(0, bindings);
         render_pass.bind_index_buffer(index_binding, IndexElementSize::_32BIT);
         render_pass.bind_fragment_samplers(0, tex_samp_bind);
-        render_pass.draw_indexed_primitives(INDEXES.len() as u32, 1, 0, 0, 0);
+        render_pass.draw_indexed_primitives(chunk.indices.len() as u32, 1, 0, 0, 0);
 
     }
 }
@@ -689,11 +504,11 @@ fn upload_texture(
     path: &str,
     texture: &Texture<'static>,
 ) -> Result<()> {
-    let i = image::open(path)?;
-    let bytes = i.to_rgba8();
+    let img = image::open(path)?;
+    let bytes = img.to_rgba8();
     let transfer_buffer = device
         .create_transfer_buffer()
-        .with_size(i.width() * i.height() * 4 * size_of::<u8>() as u32)
+        .with_size(img.width() * img.height() * 4 * size_of::<u8>() as u32)
         .with_usage(TransferBufferUsage::UPLOAD)
         .build()?;
     let mut memmap = transfer_buffer.map(device, false);

@@ -9,6 +9,8 @@ glam = "0.33.2"
 image = "0.25.10"
 imgui = "0.12.0"
 imgui-sdl3 = { git = "https://github.com/florianvazelle/imgui-sdl3", version = "0.5.2" }
+noise = "0.9.0"
+rand = "0.10.2"
 sdl3 = "0.18.4"
 [package.metadata.bundle]
 name = "voxcell"
