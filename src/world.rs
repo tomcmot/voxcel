@@ -199,6 +199,7 @@ fn new_cube_vertices(position: Vec3, top: f32, bottom: f32, sides: f32) -> Vec<V
 }
 
 const CHUNK_DIM: u8 = 16;
+const CHUNK_DIMF: f32 = 16.;
 pub struct Chunk {
     dirty: bool,
     materials: Vec<Material>,
@@ -208,7 +209,8 @@ pub struct Chunk {
 
 impl Chunk {
     pub fn new(noise: &mut Simplex, p: ChunkCoord) -> Chunk {
-        let mut materials = vec![Material::Air; CHUNK_DIM as usize * CHUNK_DIM as usize * CHUNK_DIM as usize];
+        let mut materials =
+            vec![Material::Air; CHUNK_DIM as usize * CHUNK_DIM as usize * CHUNK_DIM as usize];
         for x in 0..CHUNK_DIM {
             for y in 0..CHUNK_DIM {
                 for z in 0..CHUNK_DIM {
@@ -234,7 +236,7 @@ impl Chunk {
             return;
         }
         let mut skipped = 0;
-        let vertices= self
+        let vertices = self
             .materials
             .iter()
             .enumerate()
@@ -310,18 +312,18 @@ fn sample_material(noise: &mut Simplex, chunk: &ChunkCoord, p: &Voxel) -> Materi
     if p.y == 0 && chunk.y == 0 {
         return Material::Magma;
     }
-    let height = HALF_WORLD_HEIGHT + (noise.get([sample_x,sample_z]) * HALF_WORLD_HEIGHT).ceil();
+    let height = HALF_WORLD_HEIGHT + (noise.get([sample_x, sample_z]) * HALF_WORLD_HEIGHT).ceil();
     if y > height {
-        return Material::Air
+        return Material::Air;
     }
 
     if y + 0.01 > height || y == height {
-        return Material::Grass
+        return Material::Grass;
     }
     if y > 0.75 * height {
         Material::Dirt
     } else {
-        let n = noise.get([sample_x,sample_y,sample_z]);
+        let n = noise.get([sample_x, sample_y, sample_z]);
         if n < 0.5 {
             Material::Andesite
         } else {
@@ -400,7 +402,7 @@ impl World {
             if limit == 0 {
                 break;
             }
-            if ! chunk.dirty {
+            if !chunk.dirty {
                 continue;
             }
             chunk.generate_mesh();
@@ -409,11 +411,18 @@ impl World {
     }
 
     pub fn render(&self) -> Vec<(Mat4, u8, &Vec<Vertex>)> {
-        self.chunks.iter().map(|(index, chunk)| {
-            let coord = ChunkCoord::from (*index);
-            let translate = Mat4::from_translation(Vec3::new(coord.x as f32, coord.y as f32, coord.z as f32));
-            (translate, chunk.version, &chunk.vertices)
-        }).collect()
+        self.chunks
+            .iter()
+            .map(|(index, chunk)| {
+                let coord = ChunkCoord::from(*index);
+                let translate = Mat4::from_translation(Vec3::new(
+                    coord.x as f32 * CHUNK_DIMF,
+                    coord.y as f32 * CHUNK_DIMF,
+                    coord.z as f32 * CHUNK_DIMF,
+                ));
+                (translate, chunk.version, &chunk.vertices)
+            })
+            .collect()
     }
     pub fn worst_case_indexes() -> Vec<u32> {
         let voxels_per_chunk = CHUNK_DIM as u32 * CHUNK_DIM as u32 * CHUNK_DIM as u32;
@@ -421,15 +430,15 @@ impl World {
         let max_indices = (voxels_per_chunk * 6 * 6) as usize;
         let mut indices = vec![0; max_indices];
         let faces = (voxels_per_chunk * 6) as usize;
-        for i in 0.. faces {
+        for i in 0..faces {
             // pattern per face
             // 0, 1, 2, 2, 1, 3,
-            indices[i*6] = (i * 4) as u32;
-            indices[i*6+1] = (i*4 + 1) as u32;
-            indices[i*6+2] = (i*4+2) as u32;
-            indices[i*6+3] = (i*4+2) as u32;
-            indices[i*6+4] = (i*4+1) as u32;
-            indices[i*6+5] = (i*4+3) as u32;
+            indices[i * 6] = (i * 4) as u32;
+            indices[i * 6 + 1] = (i * 4 + 1) as u32;
+            indices[i * 6 + 2] = (i * 4 + 2) as u32;
+            indices[i * 6 + 3] = (i * 4 + 2) as u32;
+            indices[i * 6 + 4] = (i * 4 + 1) as u32;
+            indices[i * 6 + 5] = (i * 4 + 3) as u32;
         }
         indices
     }

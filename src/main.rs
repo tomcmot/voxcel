@@ -2,7 +2,8 @@ use std::{ffi::CStr, fs};
 
 use anyhow::Result;
 use glam::{
-    Mat4, Vec2, Vec3, camera::rh::{proj::directx, view::look_to_mat4},
+    Mat4, Vec2, Vec3,
+    camera::rh::{proj::directx, view::look_to_mat4},
 };
 use sdl3::{
     event::Event,
@@ -10,9 +11,9 @@ use sdl3::{
         BlendFactor, BlendOp, BufferBinding, BufferRegion, BufferUsageFlags, ColorTargetBlendState,
         ColorTargetDescription, ColorTargetInfo, CommandBuffer, CompareOp, CopyPass,
         DepthStencilState, DepthStencilTargetInfo, Device, GraphicsPipeline,
-        GraphicsPipelineTargetInfo, IndexElementSize, LoadOp, PrimitiveType,
-        RenderPass, SampleCount, Sampler, SamplerCreateInfo, Shader, ShaderFormat, ShaderStage,
-        StoreOp, Texture, TextureCreateInfo, TextureFormat, TextureRegion, TextureSamplerBinding,
+        GraphicsPipelineTargetInfo, IndexElementSize, LoadOp, PrimitiveType, RenderPass,
+        SampleCount, Sampler, SamplerCreateInfo, Shader, ShaderFormat, ShaderStage, StoreOp,
+        Texture, TextureCreateInfo, TextureFormat, TextureRegion, TextureSamplerBinding,
         TextureTransferInfo, TextureType, TextureUsage, TransferBufferLocation,
         TransferBufferUsage, VertexInputState,
     },
@@ -122,13 +123,17 @@ fn main() -> Result<()> {
     window.set_mouse_grab(true);
     sdl.mouse().set_relative_mouse_mode(&window, true);
     let device = Device::new(ShaderFormat::SPIRV, true)?.with_window(&window)?;
-    device.set_swapchain_parameters(&window, sdl3::gpu::PresentMode::Immediate, sdl3::gpu::SwapchainComposition::Sdr)?;
+    device.set_swapchain_parameters(
+        &window,
+        sdl3::gpu::PresentMode::Immediate,
+        sdl3::gpu::SwapchainComposition::Sdr,
+    )?;
     let mut ui = ui::UI::new(&device, &window);
     let mut world = World::new(0);
     world.load_chunk(ChunkCoord::ZERO);
     world.generate();
     // todo move this into the render loop and add vertex buffer memory management
-    let (_,_, vertices) = world.render()[0];
+    let (_, _, vertices) = world.render()[0];
     let indices = World::worst_case_indexes();
     let vertex_buffer = device
         .create_buffer()
@@ -199,7 +204,7 @@ fn main() -> Result<()> {
         let cbuffer = CameraBuffer {
             proj_view: camera.projection(WINDOW_WIDTH as f32, WINDOW_HEIGHT as f32) * camera.view(),
             model: Mat4::IDENTITY,
-            normal: Mat4::IDENTITY
+            normal: Mat4::IDENTITY,
         };
 
         let lbuffer = LightingBuffer {
@@ -223,8 +228,7 @@ fn main() -> Result<()> {
             .with_load_op(LoadOp::LOAD)
             .with_store_op(StoreOp::STORE)
             .with_texture(&swapchain_texture)];
-        let render_pass =
-            device.begin_render_pass(&cmdbuffer, &color_target, Some(&depth_info))?;
+        let render_pass = device.begin_render_pass(&cmdbuffer, &color_target, Some(&depth_info))?;
         pipeline.draw(
             &cmdbuffer,
             &render_pass,
@@ -233,12 +237,20 @@ fn main() -> Result<()> {
             &bindings,
             &index_binding,
             &tex_samp_bind,
-            vertices
+            vertices,
         );
         device.end_render_pass(render_pass);
-        ui.render(&mut sdl, &device, &window, &event_pump, &mut cmdbuffer, &color_target2, |ui| {
-            ui::fps(ui, 1.0/delta);
-        });
+        ui.render(
+            &mut sdl,
+            &device,
+            &window,
+            &event_pump,
+            &mut cmdbuffer,
+            &color_target2,
+            |ui| {
+                ui::fps(ui, 1.0 / delta);
+            },
+        );
         let _ = cmdbuffer.submit()?;
     }
     Ok(())
@@ -262,7 +274,8 @@ fn keyboard_event_handler(event_pump: &sdl3::EventPump, camera: &mut Camera, del
             0.
         },
     )
-    .normalize_or_zero() * 10.;
+    .normalize_or_zero()
+        * 10.;
     camera.move_to(
         camera.position
             + (camera.front * camera_motion.x * delta)
@@ -316,7 +329,12 @@ const FRAG_SHADER: ShaderDesc = ShaderDesc {
     storage_textures: 0,
 };
 
-fn create_shaders(device: &Device, path: String, vert: ShaderDesc, frag: ShaderDesc) -> Result<(Shader, Shader)> {
+fn create_shaders(
+    device: &Device,
+    path: String,
+    vert: ShaderDesc,
+    frag: ShaderDesc,
+) -> Result<(Shader, Shader)> {
     let code = fs::read(path)?;
     let vertex_shader = device
         .create_shader()
@@ -345,7 +363,12 @@ struct Renderer {
 
 impl Renderer {
     fn new(window: &Window, device: &Device, path: String) -> Result<Self> {
-        let (vertex_shader, frag_shader) = create_shaders(device, path.clone() + "main.spv", VERTEX_SHADER, FRAG_SHADER)?;
+        let (vertex_shader, frag_shader) = create_shaders(
+            device,
+            path.clone() + "main.spv",
+            VERTEX_SHADER,
+            FRAG_SHADER,
+        )?;
         let color_target = [ColorTargetDescription::default()
             .with_blend_state(
                 ColorTargetBlendState::new()
@@ -394,7 +417,7 @@ impl Renderer {
         bindings: &[BufferBinding],
         index_binding: &BufferBinding,
         tex_samp_bind: &[TextureSamplerBinding<'_>],
-        vertices: &Vec<Vertex>
+        vertices: &Vec<Vertex>,
     ) {
         //
         // main
@@ -406,7 +429,6 @@ impl Renderer {
         render_pass.bind_index_buffer(index_binding, IndexElementSize::_32BIT);
         render_pass.bind_fragment_samplers(0, tex_samp_bind);
         render_pass.draw_indexed_primitives((vertices.len() / 4 * 6) as u32, 1, 0, 0, 0);
-
     }
 }
 
