@@ -8,9 +8,9 @@ use sdl3::{
     event::Event,
     gpu::{
         BlendFactor, BlendOp, BufferBinding, BufferRegion, BufferUsageFlags, ColorTargetBlendState,
-        ColorTargetDescription, ColorTargetInfo, CommandBuffer, CompareOp, CopyPass, CullMode,
+        ColorTargetDescription, ColorTargetInfo, CommandBuffer, CompareOp, CopyPass,
         DepthStencilState, DepthStencilTargetInfo, Device, GraphicsPipeline,
-        GraphicsPipelineTargetInfo, IndexElementSize, LoadOp, PrimitiveType, RasterizerState,
+        GraphicsPipelineTargetInfo, IndexElementSize, LoadOp, PrimitiveType,
         RenderPass, SampleCount, Sampler, SamplerCreateInfo, Shader, ShaderFormat, ShaderStage,
         StoreOp, Texture, TextureCreateInfo, TextureFormat, TextureRegion, TextureSamplerBinding,
         TextureTransferInfo, TextureType, TextureUsage, TransferBufferLocation,
@@ -22,12 +22,12 @@ use sdl3::{
     video::Window,
 };
 
-mod chunk;
 mod ui;
+mod world;
 
-use chunk::Vertex;
+use world::Vertex;
 
-use crate::chunk::Chunk;
+use crate::world::{ChunkCoord, World};
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -55,12 +55,6 @@ struct LightingBuffer {
     light_dir: Vec3,
     _pad0: f32,
     light_color: Vec3,
-}
-
-#[repr(C)]
-struct OutlineBuffer {
-    color: Vec3,
-    thickness: f32,
 }
 
 impl Default for Camera {
@@ -130,10 +124,15 @@ fn main() -> Result<()> {
     let device = Device::new(ShaderFormat::SPIRV, true)?.with_window(&window)?;
     device.set_swapchain_parameters(&window, sdl3::gpu::PresentMode::Immediate, sdl3::gpu::SwapchainComposition::Sdr)?;
     let mut ui = ui::UI::new(&device, &window);
-    let chunk = Chunk::new(0, Vec3::ZERO);
+    let mut world = World::new(0);
+    world.load_chunk(ChunkCoord::ZERO);
+    world.generate();
+    // todo move this into the render loop and add vertex buffer memory management
+    let (_,_, vertices) = world.render()[0];
+    let indices = World::worst_case_indexes();
     let vertex_buffer = device
         .create_buffer()
-        .with_size((chunk.vertices.len() * size_of::<Vertex>()) as u32)
+        .with_size((vertices.len() * size_of::<Vertex>()) as u32)
         .with_usage(BufferUsageFlags::VERTEX)
         .build()?;
     let bindings = [BufferBinding::default()
@@ -141,7 +140,7 @@ fn main() -> Result<()> {
         .with_offset(0)];
     let index_buffer = device
         .create_buffer()
-        .with_size((chunk.indices.len() * size_of::<u32>()) as u32)
+        .with_size((indices.len() * size_of::<u32>()) as u32)
         .with_usage(BufferUsageFlags::INDEX)
         .build()?;
     let index_binding = BufferBinding::default()
@@ -151,8 +150,8 @@ fn main() -> Result<()> {
     {
         let copy_commands = device.acquire_command_buffer()?;
         let copy_pass = device.begin_copy_pass(&copy_commands)?;
-        upload_data(&device, &copy_pass, &vertex_buffer, &chunk.vertices)?;
-        upload_data(&device, &copy_pass, &index_buffer, &chunk.indices)?;
+        upload_data(&device, &copy_pass, &vertex_buffer, vertices)?;
+        upload_data(&device, &copy_pass, &index_buffer, &indices)?;
         upload_texture(&device, &copy_pass, TEXTURE_PATH, &texture)?;
         device.end_copy_pass(copy_pass);
         let _ = copy_commands.submit()?;
@@ -166,7 +165,6 @@ fn main() -> Result<()> {
     let mut time = 0.;
     let mut event_pump = sdl.event_pump()?;
     let mut camera = Camera::default();
-    
     'game: loop {
         let current_time = unsafe { SDL_GetTicksNS() } as f32 / 1e9;
         let delta = current_time - time;
@@ -212,11 +210,6 @@ fn main() -> Result<()> {
             light_color: Vec3::new(1., 1., 0.8),
         };
 
-        let obuffer = OutlineBuffer {
-            color: Vec3::ZERO,
-            thickness: 0.05,
-        };
-
         let mut cmdbuffer = device.acquire_command_buffer()?;
         let swapchain_texture = cmdbuffer.wait_and_acquire_swapchain_texture(&window)?;
         let color_target = [ColorTargetInfo::default()
@@ -237,11 +230,10 @@ fn main() -> Result<()> {
             &render_pass,
             &cbuffer,
             &lbuffer,
-            &obuffer,
             &bindings,
             &index_binding,
             &tex_samp_bind,
-            &chunk
+            vertices
         );
         device.end_render_pass(render_pass);
         ui.render(&mut sdl, &device, &window, &event_pump, &mut cmdbuffer, &color_target2, |ui| {
@@ -324,22 +316,6 @@ const FRAG_SHADER: ShaderDesc = ShaderDesc {
     storage_textures: 0,
 };
 
-const VERT_OUTLINE: ShaderDesc = ShaderDesc {
-    entry_point: c"vertex",
-    samplers: 0,
-    uniform_buffers: 2,
-    storage_buffers: 0,
-    storage_textures: 0,
-};
-
-const FRAG_OUTLINE: ShaderDesc = ShaderDesc {
-    entry_point: c"fragment",
-    samplers: 0,
-    uniform_buffers: 1,
-    storage_buffers: 0,
-    storage_textures: 0,
-};
-
 fn create_shaders(device: &Device, path: String, vert: ShaderDesc, frag: ShaderDesc) -> Result<(Shader, Shader)> {
     let code = fs::read(path)?;
     let vertex_shader = device
@@ -365,7 +341,6 @@ fn create_shaders(device: &Device, path: String, vert: ShaderDesc, frag: ShaderD
 
 struct Renderer {
     main: GraphicsPipeline,
-    outline: GraphicsPipeline,
 }
 
 impl Renderer {
@@ -407,30 +382,7 @@ impl Renderer {
             )
             .build()?;
 
-        //
-        // outline pipeline
-        //
-        let outline_target_info = GraphicsPipelineTargetInfo::new()
-            .with_color_target_descriptions(&color_target)
-            .with_has_depth_stencil_target(true)
-            .with_depth_stencil_format(TextureFormat::D32Float);
-
-        let (vertex_shader, frag_shader) = create_shaders(device, path + "/outline.spv", VERT_OUTLINE, FRAG_OUTLINE)?;
-        let outline = device
-            .create_graphics_pipeline()
-            .with_vertex_shader(&vertex_shader)
-            .with_fragment_shader(&frag_shader)
-            .with_primitive_type(PrimitiveType::TriangleList)
-            .with_vertex_input_state(
-                VertexInputState::default()
-                    .with_vertex_buffer_descriptions(&[Vertex::buffer_desc()])
-                    .with_vertex_attributes(Vertex::attributes().as_slice()),
-            )
-            .with_target_info(outline_target_info)
-            .with_rasterizer_state(RasterizerState::default().with_cull_mode(CullMode::Front))
-            .build()?;
-
-        Ok(Renderer { main, outline })
+        Ok(Renderer { main })
     }
 
     fn draw(
@@ -439,22 +391,11 @@ impl Renderer {
         render_pass: &RenderPass,
         camera_buffer: &CameraBuffer,
         light_buffer: &LightingBuffer,
-        outline_buffer: &OutlineBuffer,
         bindings: &[BufferBinding],
         index_binding: &BufferBinding,
         tex_samp_bind: &[TextureSamplerBinding<'_>],
-        chunk: &Chunk
+        vertices: &Vec<Vertex>
     ) {
-        //
-        // outline
-        //
-        render_pass.bind_graphics_pipeline(&self.outline);
-        cmdbuffer.push_vertex_uniform_data(0, camera_buffer);
-        cmdbuffer.push_vertex_uniform_data(1, &outline_buffer.thickness);
-        cmdbuffer.push_fragment_uniform_data(0, &outline_buffer.color);
-        render_pass.bind_vertex_buffers(0, bindings);
-        render_pass.bind_index_buffer(index_binding, IndexElementSize::_32BIT);
-        render_pass.draw_indexed_primitives(chunk.indices.len() as u32, 1, 0, 0, 0);
         //
         // main
         //
@@ -464,7 +405,7 @@ impl Renderer {
         render_pass.bind_vertex_buffers(0, bindings);
         render_pass.bind_index_buffer(index_binding, IndexElementSize::_32BIT);
         render_pass.bind_fragment_samplers(0, tex_samp_bind);
-        render_pass.draw_indexed_primitives(chunk.indices.len() as u32, 1, 0, 0, 0);
+        render_pass.draw_indexed_primitives((vertices.len() / 4 * 6) as u32, 1, 0, 0, 0);
 
     }
 }
