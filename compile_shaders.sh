@@ -1,2 +1,1 @@
 slangc -target spirv -profile spirv_1_0 -emit-spirv-directly -fvk-use-entrypoint-name -entry vertex -entry fragment -o assets/main.spv assets/main.slang
-slangc -target spirv -profile spirv_1_0 -emit-spirv-directly -fvk-use-entrypoint-name -entry vertex -entry fragment -o assets/outline.spv assets/outline.slang

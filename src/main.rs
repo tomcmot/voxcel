@@ -10,12 +10,12 @@ use sdl3::{
     gpu::{
         BlendFactor, BlendOp, BufferBinding, BufferRegion, BufferUsageFlags, ColorTargetBlendState,
         ColorTargetDescription, ColorTargetInfo, CommandBuffer, CompareOp, CopyPass,
-        DepthStencilState, DepthStencilTargetInfo, Device, GraphicsPipeline,
+        DepthStencilState, DepthStencilTargetInfo, Device, Filter, GraphicsPipeline,
         GraphicsPipelineTargetInfo, IndexElementSize, LoadOp, PrimitiveType, RenderPass,
-        SampleCount, Sampler, SamplerCreateInfo, Shader, ShaderFormat, ShaderStage, StoreOp,
-        Texture, TextureCreateInfo, TextureFormat, TextureRegion, TextureSamplerBinding,
-        TextureTransferInfo, TextureType, TextureUsage, TransferBufferLocation,
-        TransferBufferUsage, VertexInputState,
+        SampleCount, Sampler, SamplerAddressMode, SamplerCreateInfo, SamplerMipmapMode, Shader,
+        ShaderFormat, ShaderStage, StoreOp, Texture, TextureCreateInfo, TextureFormat,
+        TextureRegion, TextureSamplerBinding, TextureTransferInfo, TextureType, TextureUsage,
+        TransferBufferLocation, TransferBufferUsage, VertexInputState,
     },
     keyboard::{Keycode, Scancode},
     pixels::Color,
@@ -46,16 +46,29 @@ struct Camera {
 struct CameraBuffer {
     proj_view: Mat4,
     model: Mat4,
-    normal: Mat4,
 }
 
 #[repr(C)]
 struct LightingBuffer {
     ambient_color: Vec3,
-    band_count: f32,
-    light_dir: Vec3,
     _pad0: f32,
+    light_dir: Vec3,
+    _pad1: f32,
     light_color: Vec3,
+    _pad2: f32,
+}
+
+impl LightingBuffer {
+    pub fn new(ambient_color: Vec3, light_dir: Vec3, light_color: Vec3) -> Self {
+        LightingBuffer {
+            ambient_color,
+            _pad0: 0.,
+            light_dir,
+            _pad1: 0.,
+            light_color,
+            _pad2: 0.,
+        }
+    }
 }
 
 impl Default for Camera {
@@ -111,6 +124,7 @@ const SHADER_PATH: &'static str = "assets/";
 const WINDOW_WIDTH: u32 = 800;
 const WINDOW_HEIGHT: u32 = 600;
 const TEXTURE_PATH: &'static str = "assets/blocks.png";
+const SHADING_PATH: &'static str = "assets/light.png";
 fn main() -> Result<()> {
     let _ = sdl3::hint::set(sdl3::hint::names::RENDER_VULKAN_DEBUG, "1");
     let mut sdl = sdl3::init()?;
@@ -151,20 +165,28 @@ fn main() -> Result<()> {
     let index_binding = BufferBinding::default()
         .with_buffer(&index_buffer)
         .with_offset(0);
-    let (texture, sampler) = create_texture_sampler(&device)?;
+    let sampler = create_sampler(&device)?;
+    let texture = create_texture(&device, TextureType::_2DArray, 32, 32, 6)?;
+    let shading = create_texture(&device, TextureType::_2D, 1, 32, 1)?;
     {
         let copy_commands = device.acquire_command_buffer()?;
         let copy_pass = device.begin_copy_pass(&copy_commands)?;
         upload_data(&device, &copy_pass, &vertex_buffer, vertices)?;
         upload_data(&device, &copy_pass, &index_buffer, &indices)?;
-        upload_texture(&device, &copy_pass, TEXTURE_PATH, &texture)?;
+        upload_texture(&device, &copy_pass, TEXTURE_PATH, &texture, 6)?;
+        upload_texture(&device, &copy_pass, SHADING_PATH, &shading, 1)?;
         device.end_copy_pass(copy_pass);
         let _ = copy_commands.submit()?;
     };
 
-    let tex_samp_bind = [TextureSamplerBinding::default()
-        .with_sampler(&sampler)
-        .with_texture(&texture)];
+    let tex_samp_bind = [
+        TextureSamplerBinding::default()
+            .with_sampler(&sampler)
+            .with_texture(&texture),
+        TextureSamplerBinding::default()
+            .with_sampler(&sampler)
+            .with_texture(&shading),
+    ];
     let (_depth_texture, depth_info) = create_depth_texture(&device)?;
     let pipeline = Renderer::new(&window, &device, SHADER_PATH.into())?;
     let mut time = 0.;
@@ -201,19 +223,16 @@ fn main() -> Result<()> {
         }
         keyboard_event_handler(&event_pump, &mut camera, delta);
 
-        let cbuffer = CameraBuffer {
+        let camera_buffer = CameraBuffer {
             proj_view: camera.projection(WINDOW_WIDTH as f32, WINDOW_HEIGHT as f32) * camera.view(),
             model: Mat4::IDENTITY,
-            normal: Mat4::IDENTITY,
         };
 
-        let lbuffer = LightingBuffer {
-            ambient_color: Vec3::new(0.25, 0.25, 0.5),
-            band_count: 5.,
-            light_dir: Vec3::new(0.4, 0.8, 0.5),
-            _pad0: 0.,
-            light_color: Vec3::new(1., 1., 0.8),
-        };
+        let light_buffer = LightingBuffer::new(
+            Vec3::new(0.25, 0.25, 0.5),
+            Vec3::new(0.3, 0.8, 0.6).normalize(),
+            Vec3::new(1., 1., 0.8),
+        );
 
         let mut cmdbuffer = device.acquire_command_buffer()?;
         let swapchain_texture = cmdbuffer.wait_and_acquire_swapchain_texture(&window)?;
@@ -232,8 +251,8 @@ fn main() -> Result<()> {
         pipeline.draw(
             &cmdbuffer,
             &render_pass,
-            &cbuffer,
-            &lbuffer,
+            &camera_buffer,
+            &light_buffer,
             &bindings,
             &index_binding,
             &tex_samp_bind,
@@ -323,7 +342,7 @@ const VERTEX_SHADER: ShaderDesc = ShaderDesc {
 
 const FRAG_SHADER: ShaderDesc = ShaderDesc {
     entry_point: c"fragment",
-    samplers: 1,
+    samplers: 2,
     uniform_buffers: 1,
     storage_buffers: 0,
     storage_textures: 0,
@@ -419,9 +438,6 @@ impl Renderer {
         tex_samp_bind: &[TextureSamplerBinding<'_>],
         vertices: &Vec<Vertex>,
     ) {
-        //
-        // main
-        //
         render_pass.bind_graphics_pipeline(&self.main);
         cmdbuffer.push_vertex_uniform_data(0, camera_buffer);
         cmdbuffer.push_fragment_uniform_data(0, light_buffer);
@@ -466,26 +482,29 @@ fn upload_texture(
     copy_pass: &CopyPass,
     path: &str,
     texture: &Texture<'static>,
+    layers: u32,
 ) -> Result<()> {
     let img = image::open(path)?;
+    let height = img.height() / layers;
+    let width = img.width();
     let bytes = img.to_rgba8();
     let transfer_buffer = device
         .create_transfer_buffer()
-        .with_size(img.width() * img.height() * 4 * size_of::<u8>() as u32)
+        .with_size(width * img.height() * 4 * size_of::<u8>() as u32)
         .with_usage(TransferBufferUsage::UPLOAD)
         .build()?;
     let mut memmap = transfer_buffer.map(device, false);
     memmap.mem_mut().copy_from_slice(bytes.as_raw());
-    for i in 0..6 {
+    for i in 0..layers {
         copy_pass.upload_to_gpu_texture(
             TextureTransferInfo::new()
                 .with_transfer_buffer(&transfer_buffer)
-                .with_offset(i * 32 * 32 * 4 * size_of::<u8>() as u32),
+                .with_offset(i * width * height * 4 * size_of::<u8>() as u32),
             TextureRegion::new()
                 .with_texture(texture)
                 .with_depth(1)
-                .with_height(32)
-                .with_width(32)
+                .with_height(height)
+                .with_width(width)
                 .with_layer(i)
                 .with_mip_level(0),
             false,
@@ -494,18 +513,37 @@ fn upload_texture(
     Ok(())
 }
 
-fn create_texture_sampler(device: &Device) -> Result<(Texture<'static>, Sampler)> {
-    let sampler_info = SamplerCreateInfo::default();
-    let sampler = device.create_sampler(sampler_info)?;
+fn create_sampler(device: &Device) -> Result<Sampler> {
+    let sampler_info = SamplerCreateInfo::default()
+        .with_min_filter(Filter::Nearest)
+        .with_mag_filter(Filter::Nearest)
+        .with_mipmap_mode(SamplerMipmapMode::Nearest)
+        .with_address_mode_u(SamplerAddressMode::ClampToEdge)
+        .with_address_mode_v(SamplerAddressMode::ClampToEdge)
+        .with_address_mode_w(SamplerAddressMode::ClampToEdge)
+        .with_mip_lod_bias(0.0)
+        .with_min_lod(0.0)
+        .with_max_lod(0.0)
+        .with_enable_anisotropy(false)
+        .with_enable_compare(false);
+    Ok(device.create_sampler(sampler_info)?)
+}
+
+fn create_texture(
+    device: &Device,
+    texture_type: TextureType,
+    height: u32,
+    width: u32,
+    layers: u32,
+) -> Result<Texture<'static>> {
     let texture_info = TextureCreateInfo::default()
-        .with_type(TextureType::_2DArray)
+        .with_type(texture_type)
         .with_format(TextureFormat::R8g8b8a8Unorm)
         .with_usage(TextureUsage::SAMPLER)
-        .with_height(32)
-        .with_width(32)
-        .with_layer_count_or_depth(6)
+        .with_height(height)
+        .with_width(width)
+        .with_layer_count_or_depth(layers)
         .with_num_levels(1)
         .with_sample_count(SampleCount::NoMultiSampling);
-    let texture = device.create_texture(texture_info)?;
-    Ok((texture, sampler))
+    Ok(device.create_texture(texture_info)?)
 }
