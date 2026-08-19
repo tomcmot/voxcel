@@ -1,5 +1,5 @@
 [package]
-name = "voxcell"
+name = "voxcel"
 version = "0.1.0"
 edition = "2024"
 
@@ -14,8 +14,8 @@ noise = "0.9.0"
 rand = "0.10.2"
 sdl3 = "0.18.4"
 [package.metadata.bundle]
-name = "voxcell"
-identifier = "io.github.tomcmot.voxcell"
+name = "voxcel"
+identifier = "io.github.tomcmot.voxcel"
 resources = [
     "assets",
 ]
