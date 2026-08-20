@@ -1,9 +1,14 @@
-use std::{collections::HashMap, hash::BuildHasherDefault};
-
-use glam::{Mat4, Vec3};
+use anyhow::Result;
+use glam::Vec3;
 use nohash_hasher::NoHashHasher;
 use noise::{NoiseFn, Simplex};
-use sdl3::gpu::{VertexAttribute, VertexBufferDescription, VertexElementFormat};
+use sdl3::gpu::{
+    Buffer, BufferBinding, BufferUsageFlags, CopyPass, Device, RenderPass, VertexAttribute,
+    VertexBufferDescription, VertexElementFormat,
+};
+use std::{collections::HashMap, hash::BuildHasherDefault};
+
+use crate::gpu_mem::upload_data;
 
 // Voxel is a coordinate within a Chunk
 #[derive(Debug)]
@@ -198,12 +203,17 @@ fn new_cube_vertices(position: Vec3, top: f32, bottom: f32, sides: f32) -> Vec<V
     ]
 }
 
+struct VertexBuffer {
+    vertices: usize,
+    buffer: Buffer,
+}
+
 const CHUNK_DIM: u8 = 16;
 const CHUNK_DIMF: f32 = 16.;
 pub struct Chunk {
     dirty: bool,
     materials: Vec<Material>,
-    vertices: Vec<Vertex>,
+    vertex_buffer: Option<VertexBuffer>,
     version: u8,
 }
 
@@ -222,7 +232,7 @@ impl Chunk {
         Chunk {
             dirty: true,
             materials,
-            vertices: vec![],
+            vertex_buffer: None,
             version: 0,
         }
     }
@@ -231,9 +241,14 @@ impl Chunk {
         self.materials[p.as_usize()] = m;
     }
 
-    pub fn generate_mesh(&mut self) {
-        if !self.dirty {
-            return;
+    pub fn generate_mesh(
+        &mut self,
+        device: &Device,
+        copy_pass: &CopyPass,
+        coord: ChunkCoord,
+    ) -> Result<()> {
+        if !self.dirty && self.vertex_buffer.is_some() {
+            return Ok(());
         }
         let mut skipped = 0;
         let vertices = self
@@ -251,7 +266,11 @@ impl Chunk {
                 let top = material.top().unwrap_or(side);
                 let bottom = material.bottom().unwrap_or(side);
                 let mesh = new_cube_vertices(
-                    Vec3::new(v.x as f32, v.y as f32, v.z as f32),
+                    Vec3::new(
+                        coord.x as f32 * CHUNK_DIM as f32 + v.x as f32,
+                        coord.y as f32 * CHUNK_DIM as f32 + v.y as f32,
+                        coord.z as f32 * CHUNK_DIM as f32 + v.z as f32,
+                    ),
                     top,
                     bottom,
                     side,
@@ -259,10 +278,21 @@ impl Chunk {
                 Some(mesh)
             })
             .flatten()
-            .collect::<Vec<Vec<Vertex>>>();
-        self.vertices = vertices.concat();
+            .collect::<Vec<Vec<Vertex>>>()
+            .concat();
+        let buffer = device
+            .create_buffer()
+            .with_usage(BufferUsageFlags::VERTEX)
+            .with_size((vertices.len() * size_of::<Vertex>()) as u32)
+            .build()?;
+        upload_data(device, copy_pass, &buffer, &vertices)?;
+        self.vertex_buffer = Some(VertexBuffer {
+            vertices: vertices.len(),
+            buffer,
+        });
         self.version += 1;
         self.dirty = false;
+        Ok(())
     }
 }
 
@@ -333,6 +363,7 @@ fn sample_material(noise: &mut Simplex, chunk: &ChunkCoord, p: &Voxel) -> Materi
 }
 
 // ChunkCoord is the coordinate of a chunk in chunk units (see CHUNK_DIM)
+#[derive(Debug)]
 pub struct ChunkCoord {
     x: u32,
     y: u32,
@@ -390,39 +421,47 @@ impl World {
             .or_insert_with(|| Chunk::new(&mut self.noise, p));
     }
 
+    pub fn load_chunks(&mut self, distance: u32) {
+        for x in 0..distance {
+            for z in 0..distance {
+                let p = ChunkCoord { x: self.origin.x + x, y: self.origin.y, z: self.origin.z + z };
+                self.load_chunk(p);
+            }
+        }
+    }
+
     pub fn update_origin(&mut self, o: ChunkCoord) {
         self.chunks
             .retain(|&k, _| ChunkCoord::from(k).distance(&o) < 32.);
         self.origin = o;
     }
 
-    pub fn generate(&mut self) {
+    pub fn generate(&mut self, device: &Device, copy_pass: &CopyPass) -> Result<()> {
         let mut limit = 4;
-        for (_, chunk) in &mut self.chunks {
+        for (i, chunk) in &mut self.chunks {
             if limit == 0 {
                 break;
             }
             if !chunk.dirty {
                 continue;
             }
-            chunk.generate_mesh();
+            let coord = ChunkCoord::from(*i);
+            chunk.generate_mesh(device, copy_pass, coord)?;
             limit -= 1;
         }
+        Ok(())
     }
 
-    pub fn render(&self) -> Vec<(Mat4, u8, &Vec<Vertex>)> {
-        self.chunks
-            .iter()
-            .map(|(index, chunk)| {
-                let coord = ChunkCoord::from(*index);
-                let translate = Mat4::from_translation(Vec3::new(
-                    coord.x as f32 * CHUNK_DIMF,
-                    coord.y as f32 * CHUNK_DIMF,
-                    coord.z as f32 * CHUNK_DIMF,
-                ));
-                (translate, chunk.version, &chunk.vertices)
-            })
-            .collect()
+    pub fn render(&self, render_pass: &RenderPass) {
+        for (_i, chunk) in &self.chunks {
+            if let Some(buffer) = &chunk.vertex_buffer {
+                let binding = BufferBinding::default()
+                    .with_buffer(&buffer.buffer)
+                    .with_offset(0);
+                render_pass.bind_vertex_buffers(0, &[binding]);
+                render_pass.draw_indexed_primitives((buffer.vertices / 4 * 6) as u32, 1, 0, 0, 0);
+            }
+        }
     }
     pub fn worst_case_indexes() -> Vec<u32> {
         let voxels_per_chunk = CHUNK_DIM as u32 * CHUNK_DIM as u32 * CHUNK_DIM as u32;

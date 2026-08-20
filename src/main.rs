@@ -1,130 +1,32 @@
-use std::{ffi::CStr, fs};
-
 use anyhow::Result;
-use glam::{
-    Mat4, Vec2, Vec3,
-    camera::rh::{proj::directx, view::look_to_mat4},
+use glam::{ Vec2,
 };
 use sdl3::{
     event::Event,
     gpu::{
-        BlendFactor, BlendOp, BufferBinding, BufferRegion, BufferUsageFlags, ColorTargetBlendState,
-        ColorTargetDescription, ColorTargetInfo, CommandBuffer, CompareOp, CopyPass,
-        DepthStencilState, DepthStencilTargetInfo, Device, Filter, GraphicsPipeline,
-        GraphicsPipelineTargetInfo, IndexElementSize, LoadOp, PrimitiveType, RenderPass,
-        SampleCount, Sampler, SamplerAddressMode, SamplerCreateInfo, SamplerMipmapMode, Shader,
-        ShaderFormat, ShaderStage, StoreOp, Texture, TextureCreateInfo, TextureFormat,
-        TextureRegion, TextureSamplerBinding, TextureTransferInfo, TextureType, TextureUsage,
-        TransferBufferLocation, TransferBufferUsage, VertexInputState,
+        ColorTargetInfo, DepthStencilTargetInfo, Device, LoadOp, ShaderFormat, 
+        StoreOp, Texture, TextureCreateInfo, TextureFormat, TextureType, TextureUsage,
     },
     keyboard::{Keycode, Scancode},
     pixels::Color,
     sys::timer::SDL_GetTicksNS,
-    video::Window,
 };
 
+mod app;
+mod camera;
 mod ui;
 mod world;
+mod gpu_mem;
+mod shaders;
 
-use world::Vertex;
+use app::App;
 
-use crate::world::{ChunkCoord, World};
-
-#[repr(C)]
-#[derive(Clone, Copy)]
-struct Camera {
-    position: Vec3,
-    front: Vec3,
-    up: Vec3,
-    pitch: f32,
-    yaw: f32,
-    zoom: f32,
-}
-
-#[repr(C)]
-#[derive(Debug)]
-struct CameraBuffer {
-    proj_view: Mat4,
-    model: Mat4,
-}
-
-#[repr(C)]
-struct LightingBuffer {
-    ambient_color: Vec3,
-    _pad0: f32,
-    light_dir: Vec3,
-    _pad1: f32,
-    light_color: Vec3,
-    _pad2: f32,
-}
-
-impl LightingBuffer {
-    pub fn new(ambient_color: Vec3, light_dir: Vec3, light_color: Vec3) -> Self {
-        LightingBuffer {
-            ambient_color,
-            _pad0: 0.,
-            light_dir,
-            _pad1: 0.,
-            light_color,
-            _pad2: 0.,
-        }
-    }
-}
-
-impl Default for Camera {
-    fn default() -> Self {
-        Camera {
-            position: Vec3::new(0., 0., 5.),
-            front: -Vec3::Z,
-            up: Vec3::Y,
-            pitch: 0.,
-            yaw: -90.,
-            zoom: 45.,
-        }
-    }
-}
-
-const INVERT_Y: bool = false;
-impl Camera {
-    fn move_to(&mut self, p: Vec3) {
-        self.position = p;
-    }
-
-    fn view(&self) -> Mat4 {
-        look_to_mat4(self.position, self.front, self.up)
-    }
-
-    /// SDL3 GPU uses the directx Z convention
-    fn projection(&self, width: f32, height: f32) -> Mat4 {
-        directx::perspective(self.zoom.to_radians(), width / height, 0.01, 200.)
-    }
-
-    fn rotate(&mut self, x_offset: f32, y_offset: f32) {
-        self.yaw += x_offset;
-        self.pitch = (self.pitch - y_offset).clamp(-89.0, 89.0);
-        // save the radians conversions
-        let yaw_rad = self.yaw.to_radians();
-        let pitch_rad = self.pitch.to_radians();
-        // calculate new facing
-        self.front = Vec3::new(
-            yaw_rad.cos() * pitch_rad.cos(),
-            if INVERT_Y {
-                -pitch_rad.sin()
-            } else {
-                pitch_rad.sin()
-            },
-            yaw_rad.sin() * pitch_rad.cos(),
-        )
-        .normalize();
-    }
-}
+use crate::camera::Camera;
 
 // todo these constants should be swapped to be queried at runtime
 const SHADER_PATH: &'static str = "assets/";
 const WINDOW_WIDTH: u32 = 800;
 const WINDOW_HEIGHT: u32 = 600;
-const TEXTURE_PATH: &'static str = "assets/blocks.png";
-const SHADING_PATH: &'static str = "assets/light.png";
 fn main() -> Result<()> {
     let _ = sdl3::hint::set(sdl3::hint::names::RENDER_VULKAN_DEBUG, "1");
     let mut sdl = sdl3::init()?;
@@ -143,55 +45,11 @@ fn main() -> Result<()> {
         sdl3::gpu::SwapchainComposition::Sdr,
     )?;
     let mut ui = ui::UI::new(&device, &window);
-    let mut world = World::new(0);
-    world.load_chunk(ChunkCoord::ZERO);
-    world.generate();
-    // todo move this into the render loop and add vertex buffer memory management
-    let (_, _, vertices) = world.render()[0];
-    let indices = World::worst_case_indexes();
-    let vertex_buffer = device
-        .create_buffer()
-        .with_size((vertices.len() * size_of::<Vertex>()) as u32)
-        .with_usage(BufferUsageFlags::VERTEX)
-        .build()?;
-    let bindings = [BufferBinding::default()
-        .with_buffer(&vertex_buffer)
-        .with_offset(0)];
-    let index_buffer = device
-        .create_buffer()
-        .with_size((indices.len() * size_of::<u32>()) as u32)
-        .with_usage(BufferUsageFlags::INDEX)
-        .build()?;
-    let index_binding = BufferBinding::default()
-        .with_buffer(&index_buffer)
-        .with_offset(0);
-    let sampler = create_sampler(&device)?;
-    let texture = create_texture(&device, TextureType::_2DArray, 32, 32, 6)?;
-    let shading = create_texture(&device, TextureType::_2D, 1, 32, 1)?;
-    {
-        let copy_commands = device.acquire_command_buffer()?;
-        let copy_pass = device.begin_copy_pass(&copy_commands)?;
-        upload_data(&device, &copy_pass, &vertex_buffer, vertices)?;
-        upload_data(&device, &copy_pass, &index_buffer, &indices)?;
-        upload_texture(&device, &copy_pass, TEXTURE_PATH, &texture, 6)?;
-        upload_texture(&device, &copy_pass, SHADING_PATH, &shading, 1)?;
-        device.end_copy_pass(copy_pass);
-        let _ = copy_commands.submit()?;
-    };
 
-    let tex_samp_bind = [
-        TextureSamplerBinding::default()
-            .with_sampler(&sampler)
-            .with_texture(&texture),
-        TextureSamplerBinding::default()
-            .with_sampler(&sampler)
-            .with_texture(&shading),
-    ];
     let (_depth_texture, depth_info) = create_depth_texture(&device)?;
-    let pipeline = Renderer::new(&window, &device, SHADER_PATH.into())?;
-    let mut time = 0.;
+    let mut app = App::new(&window, &device, SHADER_PATH.into())?;
     let mut event_pump = sdl.event_pump()?;
-    let mut camera = Camera::default();
+    let mut time = unsafe { SDL_GetTicksNS() } as f32 / 1e9;
     'game: loop {
         let current_time = unsafe { SDL_GetTicksNS() } as f32 / 1e9;
         let delta = current_time - time;
@@ -216,25 +74,18 @@ fn main() -> Result<()> {
                     xrel,
                     yrel,
                 } => {
-                    camera.rotate(xrel * look_sensitivity, yrel * look_sensitivity);
+                    app.camera.rotate(xrel * look_sensitivity, yrel * look_sensitivity);
                 }
                 _ => {}
             }
         }
-        keyboard_event_handler(&event_pump, &mut camera, delta);
-
-        let camera_buffer = CameraBuffer {
-            proj_view: camera.projection(WINDOW_WIDTH as f32, WINDOW_HEIGHT as f32) * camera.view(),
-            model: Mat4::IDENTITY,
-        };
-
-        let light_buffer = LightingBuffer::new(
-            Vec3::new(0.25, 0.25, 0.5),
-            Vec3::new(0.3, 0.8, 0.6).normalize(),
-            Vec3::new(1., 1., 0.8),
-        );
-
+        keyboard_event_handler(&event_pump, &mut app.camera, delta);
         let mut cmdbuffer = device.acquire_command_buffer()?;
+        {
+            let copy_pass = device.begin_copy_pass(&cmdbuffer)?;
+            app.generate_world(&device, &copy_pass)?;
+            device.end_copy_pass(copy_pass);
+        }
         let swapchain_texture = cmdbuffer.wait_and_acquire_swapchain_texture(&window)?;
         let color_target = [ColorTargetInfo::default()
             .with_clear_color(Color::RGB(50, 100, 200))
@@ -248,16 +99,7 @@ fn main() -> Result<()> {
             .with_store_op(StoreOp::STORE)
             .with_texture(&swapchain_texture)];
         let render_pass = device.begin_render_pass(&cmdbuffer, &color_target, Some(&depth_info))?;
-        pipeline.draw(
-            &cmdbuffer,
-            &render_pass,
-            &camera_buffer,
-            &light_buffer,
-            &bindings,
-            &index_binding,
-            &tex_samp_bind,
-            vertices,
-        );
+        app.render(&cmdbuffer, &render_pass);
         device.end_render_pass(render_pass);
         ui.render(
             &mut sdl,
@@ -323,227 +165,5 @@ fn create_depth_texture(device: &Device) -> Result<(Texture<'static>, DepthStenc
     Ok((texture, target_info))
 }
 
-// ideally this should get queried from the shaders
-struct ShaderDesc {
-    entry_point: &'static CStr,
-    samplers: u32,
-    uniform_buffers: u32,
-    storage_textures: u32,
-    storage_buffers: u32,
-}
 
-const VERTEX_SHADER: ShaderDesc = ShaderDesc {
-    entry_point: c"vertex",
-    samplers: 0,
-    uniform_buffers: 1,
-    storage_buffers: 0,
-    storage_textures: 0,
-};
 
-const FRAG_SHADER: ShaderDesc = ShaderDesc {
-    entry_point: c"fragment",
-    samplers: 2,
-    uniform_buffers: 1,
-    storage_buffers: 0,
-    storage_textures: 0,
-};
-
-fn create_shaders(
-    device: &Device,
-    path: String,
-    vert: ShaderDesc,
-    frag: ShaderDesc,
-) -> Result<(Shader, Shader)> {
-    let code = fs::read(path)?;
-    let vertex_shader = device
-        .create_shader()
-        .with_code(ShaderFormat::SPIRV, code.as_slice(), ShaderStage::Vertex)
-        .with_entrypoint(vert.entry_point)
-        .with_samplers(vert.samplers)
-        .with_uniform_buffers(vert.uniform_buffers)
-        .with_storage_textures(vert.storage_textures)
-        .with_storage_buffers(vert.storage_buffers)
-        .build()?;
-    let frag_shader = device
-        .create_shader()
-        .with_code(ShaderFormat::SPIRV, code.as_slice(), ShaderStage::Fragment)
-        .with_entrypoint(frag.entry_point)
-        .with_samplers(frag.samplers)
-        .with_uniform_buffers(frag.uniform_buffers)
-        .with_storage_textures(frag.storage_textures)
-        .with_storage_buffers(frag.storage_buffers)
-        .build()?;
-    Ok((vertex_shader, frag_shader))
-}
-
-struct Renderer {
-    main: GraphicsPipeline,
-}
-
-impl Renderer {
-    fn new(window: &Window, device: &Device, path: String) -> Result<Self> {
-        let (vertex_shader, frag_shader) = create_shaders(
-            device,
-            path.clone() + "main.spv",
-            VERTEX_SHADER,
-            FRAG_SHADER,
-        )?;
-        let color_target = [ColorTargetDescription::default()
-            .with_blend_state(
-                ColorTargetBlendState::new()
-                    .with_enable_blend(true)
-                    .with_color_blend_op(BlendOp::Add)
-                    .with_alpha_blend_op(BlendOp::Add)
-                    .with_src_color_blendfactor(BlendFactor::SrcAlpha)
-                    .with_dst_color_blendfactor(BlendFactor::OneMinusSrcAlpha)
-                    .with_src_alpha_blendfactor(BlendFactor::SrcAlpha)
-                    .with_dst_alpha_blendfactor(BlendFactor::OneMinusSrcAlpha),
-            )
-            .with_format(device.get_swapchain_texture_format(window))];
-        let target_info = GraphicsPipelineTargetInfo::new()
-            .with_color_target_descriptions(&color_target)
-            .with_has_depth_stencil_target(true)
-            .with_depth_stencil_format(TextureFormat::D32Float);
-        let main = device
-            .create_graphics_pipeline()
-            .with_vertex_shader(&vertex_shader)
-            .with_fragment_shader(&frag_shader)
-            .with_primitive_type(PrimitiveType::TriangleList)
-            .with_vertex_input_state(
-                VertexInputState::default()
-                    .with_vertex_buffer_descriptions(&[Vertex::buffer_desc()])
-                    .with_vertex_attributes(Vertex::attributes().as_slice()),
-            )
-            .with_target_info(target_info)
-            .with_depth_stencil_state(
-                DepthStencilState::default()
-                    .with_enable_depth_test(true)
-                    .with_enable_depth_write(true)
-                    .with_compare_op(CompareOp::Less)
-                    .with_enable_stencil_test(false),
-            )
-            .build()?;
-
-        Ok(Renderer { main })
-    }
-
-    fn draw(
-        &self,
-        cmdbuffer: &CommandBuffer,
-        render_pass: &RenderPass,
-        camera_buffer: &CameraBuffer,
-        light_buffer: &LightingBuffer,
-        bindings: &[BufferBinding],
-        index_binding: &BufferBinding,
-        tex_samp_bind: &[TextureSamplerBinding<'_>],
-        vertices: &Vec<Vertex>,
-    ) {
-        render_pass.bind_graphics_pipeline(&self.main);
-        cmdbuffer.push_vertex_uniform_data(0, camera_buffer);
-        cmdbuffer.push_fragment_uniform_data(0, light_buffer);
-        render_pass.bind_vertex_buffers(0, bindings);
-        render_pass.bind_index_buffer(index_binding, IndexElementSize::_32BIT);
-        render_pass.bind_fragment_samplers(0, tex_samp_bind);
-        render_pass.draw_indexed_primitives((vertices.len() / 4 * 6) as u32, 1, 0, 0, 0);
-    }
-}
-
-fn upload_data<T>(
-    device: &Device,
-    copy_pass: &CopyPass,
-    vertex_buffer: &sdl3::gpu::Buffer,
-    data: &[T],
-) -> Result<()>
-where
-    T: Copy,
-{
-    let size = (size_of::<T>() * data.len()) as u32;
-    let transfer_buffer = device
-        .create_transfer_buffer()
-        .with_size(size)
-        .with_usage(TransferBufferUsage::UPLOAD)
-        .build()?;
-    let mut mem = transfer_buffer.map(device, false);
-    mem.mem_mut().copy_from_slice(data);
-    mem.unmap();
-    let location = TransferBufferLocation::default()
-        .with_offset(0)
-        .with_transfer_buffer(&transfer_buffer);
-    let region = BufferRegion::default()
-        .with_buffer(vertex_buffer)
-        .with_offset(0)
-        .with_size(size);
-    copy_pass.upload_to_gpu_buffer(location, region, false);
-    Ok(())
-}
-
-fn upload_texture(
-    device: &Device,
-    copy_pass: &CopyPass,
-    path: &str,
-    texture: &Texture<'static>,
-    layers: u32,
-) -> Result<()> {
-    let img = image::open(path)?;
-    let height = img.height() / layers;
-    let width = img.width();
-    let bytes = img.to_rgba8();
-    let transfer_buffer = device
-        .create_transfer_buffer()
-        .with_size(width * img.height() * 4 * size_of::<u8>() as u32)
-        .with_usage(TransferBufferUsage::UPLOAD)
-        .build()?;
-    let mut memmap = transfer_buffer.map(device, false);
-    memmap.mem_mut().copy_from_slice(bytes.as_raw());
-    for i in 0..layers {
-        copy_pass.upload_to_gpu_texture(
-            TextureTransferInfo::new()
-                .with_transfer_buffer(&transfer_buffer)
-                .with_offset(i * width * height * 4 * size_of::<u8>() as u32),
-            TextureRegion::new()
-                .with_texture(texture)
-                .with_depth(1)
-                .with_height(height)
-                .with_width(width)
-                .with_layer(i)
-                .with_mip_level(0),
-            false,
-        );
-    }
-    Ok(())
-}
-
-fn create_sampler(device: &Device) -> Result<Sampler> {
-    let sampler_info = SamplerCreateInfo::default()
-        .with_min_filter(Filter::Nearest)
-        .with_mag_filter(Filter::Nearest)
-        .with_mipmap_mode(SamplerMipmapMode::Nearest)
-        .with_address_mode_u(SamplerAddressMode::ClampToEdge)
-        .with_address_mode_v(SamplerAddressMode::ClampToEdge)
-        .with_address_mode_w(SamplerAddressMode::ClampToEdge)
-        .with_mip_lod_bias(0.0)
-        .with_min_lod(0.0)
-        .with_max_lod(0.0)
-        .with_enable_anisotropy(false)
-        .with_enable_compare(false);
-    Ok(device.create_sampler(sampler_info)?)
-}
-
-fn create_texture(
-    device: &Device,
-    texture_type: TextureType,
-    height: u32,
-    width: u32,
-    layers: u32,
-) -> Result<Texture<'static>> {
-    let texture_info = TextureCreateInfo::default()
-        .with_type(texture_type)
-        .with_format(TextureFormat::R8g8b8a8Unorm)
-        .with_usage(TextureUsage::SAMPLER)
-        .with_height(height)
-        .with_width(width)
-        .with_layer_count_or_depth(layers)
-        .with_num_levels(1)
-        .with_sample_count(SampleCount::NoMultiSampling);
-    Ok(device.create_texture(texture_info)?)
-}
