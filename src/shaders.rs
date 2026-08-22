@@ -15,7 +15,7 @@ pub struct ShaderDesc {
 pub const VERTEX_SHADER: ShaderDesc = ShaderDesc {
     entry_point: c"vertex",
     samplers: 0,
-    uniform_buffers: 1,
+    uniform_buffers: 2,
     storage_buffers: 0,
     storage_textures: 0,
 };

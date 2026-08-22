@@ -16,6 +16,12 @@ cbuffer Camera {
     float4x4 model;
 }
 
+[[vk::binding(1,1)]]
+cbuffer Chunk {
+    // position of the chunk in the world * chunk size
+    float3 world_position;
+}
+
 [[vk::binding(0,3)]]
 cbuffer Lighting {
     float3   ambientColor;
@@ -33,7 +39,7 @@ Sampler2D shading;
 VertexOutput vertex(VertexInput v) 
 {
     VertexOutput output;
-    float4 worldPos = mul(model, float4(v.position, 1.0));
+    float4 worldPos = mul(model, float4(v.position + world_position, 1.0));
     output.sv_position = mul(viewProj, worldPos);
     output.uvw = v.uvw;
     output.world_normal = v.normal;

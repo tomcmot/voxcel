@@ -1,14 +1,13 @@
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use glam::Vec3;
 use nohash_hasher::NoHashHasher;
-use noise::{NoiseFn, Simplex};
+use noise::{NoiseFn};
 use sdl3::gpu::{
-    Buffer, BufferBinding, BufferUsageFlags, CopyPass, Device, RenderPass, VertexAttribute,
-    VertexBufferDescription, VertexElementFormat,
+    Buffer, BufferBinding, BufferUsageFlags, CommandBuffer, CopyPass, Device, RenderPass, VertexAttribute, VertexBufferDescription, VertexElementFormat,
 };
 use std::{collections::HashMap, hash::BuildHasherDefault};
 
-use crate::gpu_mem::upload_data;
+use crate::{gpu_mem::upload_data, toroid::ToroidNoise};
 
 // Voxel is a coordinate within a Chunk
 #[derive(Debug)]
@@ -210,6 +209,7 @@ struct VertexBuffer {
 
 const CHUNK_DIM: u8 = 16;
 const CHUNK_DIMF: f32 = 16.;
+const CHUNK_DIMF64 : f64 = 16.;
 pub struct Chunk {
     dirty: bool,
     materials: Vec<Material>,
@@ -218,7 +218,7 @@ pub struct Chunk {
 }
 
 impl Chunk {
-    pub fn new(noise: &mut Simplex, p: ChunkCoord) -> Chunk {
+    pub fn new(noise: &mut ToroidNoise, p: ChunkCoord) -> Chunk {
         let mut materials =
             vec![Material::Air; CHUNK_DIM as usize * CHUNK_DIM as usize * CHUNK_DIM as usize];
         for x in 0..CHUNK_DIM {
@@ -245,7 +245,6 @@ impl Chunk {
         &mut self,
         device: &Device,
         copy_pass: &CopyPass,
-        coord: ChunkCoord,
     ) -> Result<()> {
         if !self.dirty && self.vertex_buffer.is_some() {
             return Ok(());
@@ -267,9 +266,9 @@ impl Chunk {
                 let bottom = material.bottom().unwrap_or(side);
                 let mesh = new_cube_vertices(
                     Vec3::new(
-                        coord.x as f32 * CHUNK_DIM as f32 + v.x as f32,
-                        coord.y as f32 * CHUNK_DIM as f32 + v.y as f32,
-                        coord.z as f32 * CHUNK_DIM as f32 + v.z as f32,
+                        v.x as f32,
+                        v.y as f32,
+                        v.z as f32,
                     ),
                     top,
                     bottom,
@@ -332,17 +331,14 @@ impl Material {
     }
 }
 const HALF_WORLD_HEIGHT: f64 = 8.;
-fn sample_material(noise: &mut Simplex, chunk: &ChunkCoord, p: &Voxel) -> Material {
+fn sample_material(noise: &mut ToroidNoise, chunk: &ChunkCoord, p: &Voxel) -> Material {
     let x = (CHUNK_DIM as u32 * chunk.x + p.x as u32) as f64;
     let y = (CHUNK_DIM as u32 * chunk.y + p.y as u32) as f64;
     let z = (CHUNK_DIM as u32 * chunk.z + p.z as u32) as f64;
-    let sample_x = x * 0.01;
-    let sample_y = y * 0.01;
-    let sample_z = z * 0.01;
     if p.y == 0 && chunk.y == 0 {
         return Material::Magma;
     }
-    let height = HALF_WORLD_HEIGHT + (noise.get([sample_x, sample_z]) * HALF_WORLD_HEIGHT).ceil();
+    let height = HALF_WORLD_HEIGHT + (noise.get([x, z]) * HALF_WORLD_HEIGHT).ceil();
     if y > height {
         return Material::Air;
     }
@@ -353,7 +349,7 @@ fn sample_material(noise: &mut Simplex, chunk: &ChunkCoord, p: &Voxel) -> Materi
     if y > 0.75 * height {
         Material::Dirt
     } else {
-        let n = noise.get([sample_x, sample_y, sample_z]);
+        let n = noise.get([x, y, z]);
         if n < 0.5 {
             Material::Andesite
         } else {
@@ -379,12 +375,38 @@ impl ChunkCoord {
         x + (y << 21) + (z << 42)
     }
 
-    pub fn distance(&self, other: &ChunkCoord) -> f32 {
-        Vec3::new(self.x as f32, self.y as f32, self.z as f32).distance(Vec3::new(
-            other.x as f32,
-            other.y as f32,
-            other.z as f32,
-        ))
+    fn normalize(size: i32, x: i32, y: i32, z: i32) -> Result<ChunkCoord> {
+        if x.abs() > size || y.abs() > size || z.abs() > size {
+            Err(anyhow!("Dimension too large"))
+        } else if y < 0 {
+            Err(anyhow!("Y must be positive"))
+        } else {
+            Ok(ChunkCoord {
+                x: wrap(x, size),
+                y: y as u32,
+                z: wrap(z, size),
+            })
+        }
+    }
+
+    pub fn distance(&self, size: f32, other: &ChunkCoord) -> f32 {
+        let x = other.x as f32;
+        let y = other.y as f32;
+        let z = other.z as f32;
+        let candidates = [
+            Vec3::new(x,y,z),
+            Vec3::new(x+size, y, z),
+            Vec3::new(x, y, z + size),
+            Vec3::new(x+size, y, z+size),
+            Vec3::new(x-size, y, z),
+            Vec3::new(x, y, z-size),
+            Vec3::new(x-size, y, z-size),
+            Vec3::new(x+size, y, z-size),
+            Vec3::new(x-size, y, z+size),
+        ];
+        let me = Vec3::new(self.x as f32, self.y as f32, self.z as f32);
+        
+        candidates.iter().map(|c| c.distance(me)).min_by(f32::total_cmp).unwrap_or(f32::MAX)
     }
 }
 
@@ -401,65 +423,96 @@ impl From<u64> for ChunkCoord {
     }
 }
 
+fn wrap(x: i32, size: i32) -> u32 {
+    if x < 0 {
+        (size + x) as u32
+    } else {
+        x as u32
+    }
+}
+
 pub struct World {
-    noise: Simplex,
+    noise: ToroidNoise,
+    size: i32,
     origin: ChunkCoord, // chunk the player is currently considered inside of
     chunks: HashMap<u64, Chunk, BuildHasherDefault<NoHashHasher<u64>>>,
 }
 
 impl World {
-    pub fn new(seed: u32) -> Self {
+    pub fn new(seed: u32, size: f64) -> Self {
         World {
-            noise: Simplex::new(seed),
+            noise: ToroidNoise::new(seed, size * CHUNK_DIMF64),
+            size: size as i32,
             origin: ChunkCoord::ZERO,
             chunks: HashMap::with_hasher(BuildHasherDefault::default()),
         }
     }
-    pub fn load_chunk(&mut self, p: ChunkCoord) {
+    pub fn load_chunk(&mut self, x: i32, y: i32, z: i32) -> Result<()> {
+        let p= ChunkCoord::normalize(self.size, x, y, z)?;
         self.chunks
             .entry(p.hash())
             .or_insert_with(|| Chunk::new(&mut self.noise, p));
+        Ok(())
     }
 
-    pub fn load_chunks(&mut self, distance: u32) {
-        for x in 0..distance {
-            for z in 0..distance {
-                let p = ChunkCoord { x: self.origin.x + x, y: self.origin.y, z: self.origin.z + z };
-                self.load_chunk(p);
+    pub fn load_chunks(&mut self, distance: i32) -> Result<()> {
+        for x in -distance..distance {
+            for z in -distance..distance {
+                self.load_chunk(self.origin.x as i32 + x, self.origin.y as i32, self.origin.z as i32 + z)?;
             }
         }
+        Ok(())
     }
 
     pub fn update_origin(&mut self, o: ChunkCoord) {
         self.chunks
-            .retain(|&k, _| ChunkCoord::from(k).distance(&o) < 32.);
+            .retain(|&k, _| ChunkCoord::from(k).distance(self.size as f32, &o) < 32.);
         self.origin = o;
     }
 
     pub fn generate(&mut self, device: &Device, copy_pass: &CopyPass) -> Result<()> {
         let mut limit = 4;
-        for (i, chunk) in &mut self.chunks {
+        // todo sort by distance to origin
+        for (_i, chunk) in &mut self.chunks {
             if limit == 0 {
                 break;
             }
             if !chunk.dirty {
                 continue;
             }
-            let coord = ChunkCoord::from(*i);
-            chunk.generate_mesh(device, copy_pass, coord)?;
+            chunk.generate_mesh(device, copy_pass)?;
             limit -= 1;
         }
         Ok(())
     }
 
-    pub fn render(&self, render_pass: &RenderPass) {
-        for (_i, chunk) in &self.chunks {
-            if let Some(buffer) = &chunk.vertex_buffer {
-                let binding = BufferBinding::default()
-                    .with_buffer(&buffer.buffer)
-                    .with_offset(0);
-                render_pass.bind_vertex_buffers(0, &[binding]);
-                render_pass.draw_indexed_primitives((buffer.vertices / 4 * 6) as u32, 1, 0, 0, 0);
+    pub fn render(&self, command_buffer: &CommandBuffer, render_pass: &RenderPass) {
+        let render_distance = 16;
+        for x in -render_distance..render_distance {
+            for y in i32::max(self.origin.y as i32 - render_distance, 0)..render_distance {
+                for z in -render_distance..render_distance {
+                    match ChunkCoord::normalize(
+                        self.size,
+                        self.origin.x as i32 + x,
+                        self.origin.y as i32 + y,
+                        self.origin.z as i32 + z
+                    ) {
+                        Err(e) => { println!("{}", e)},
+                        Ok(c) => {
+                            if let Some(chunk) = self.chunks.get(&c.hash()) {
+                                if let Some(buffer) = &chunk.vertex_buffer {
+                                    let binding = BufferBinding::default()
+                                        .with_buffer(&buffer.buffer)
+                                        .with_offset(0);
+                                    let pos = Vec3::new(x as f32 * CHUNK_DIMF, y as f32 * CHUNK_DIMF,z as f32 * CHUNK_DIMF);
+                                    command_buffer.push_vertex_uniform_data(1, &pos);
+                                    render_pass.bind_vertex_buffers(0, &[binding]);
+                                    render_pass.draw_indexed_primitives((buffer.vertices / 4 * 6) as u32, 1, 0, 0, 0);
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     }

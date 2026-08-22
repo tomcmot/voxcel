@@ -18,6 +18,7 @@ mod ui;
 mod world;
 mod gpu_mem;
 mod shaders;
+mod toroid;
 
 use app::App;
 

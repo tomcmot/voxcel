@@ -129,8 +129,8 @@ impl App {
             Vec3::new(0.3, 0.8, 0.6).normalize(),
             Vec3::new(0.8, 0.8, 0.6),
         );
-        let mut world = World::new(0);
-        world.load_chunks(16);
+        let mut world = World::new(0, 32.);
+        world.load_chunks(16)?;
         Ok(App {
             main,
             world,
@@ -173,7 +173,7 @@ impl App {
         cmdbuffer.push_fragment_uniform_data(0, &self.light);
         render_pass.bind_index_buffer(&index_binding, IndexElementSize::_32BIT);
         render_pass.bind_fragment_samplers(0, &sampler_bindings);
-        self.world.render(&render_pass);
+        self.world.render(cmdbuffer, render_pass);
     }
 }
 
