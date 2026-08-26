@@ -6,10 +6,10 @@ use sdl3::{
     }, video::Window,
 };
 
-use crate::{camera::Camera, shaders::{FRAG_SHADER, VERTEX_SHADER, create_shaders}};
+use crate::{camera::Camera, chunk::Vertex, shaders::{FRAG_SHADER, VERTEX_SHADER, create_shaders}};
 use crate::{
     gpu_mem::upload_data,
-    world::{Vertex, World},
+    world::{World},
 };
 
 const TEXTURE_PATH: &'static str = "assets/blocks.png";
