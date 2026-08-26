@@ -6,7 +6,7 @@ use sdl3::gpu::{
 };
 use std::{collections::HashMap, hash::BuildHasherDefault};
 
-use crate::{chunk::{CHUNK_DIM, CHUNK_DIMF, CHUNK_DIMF64, Chunk, ChunkCoord}, toroid::ToroidNoise};
+use crate::{chunk::{CHUNK_DIM, CHUNK_DIMF, CHUNK_DIMF64, Chunk, ChunkCoord}, chunk_render::ChunkRender, toroid::ToroidNoise};
 
 
 pub struct World {
@@ -14,6 +14,7 @@ pub struct World {
     size: i32,
     origin: ChunkCoord, // chunk the player is currently considered inside of
     chunks: HashMap<u64, Chunk, BuildHasherDefault<NoHashHasher<u64>>>,
+    chunk_renders: HashMap<u64, ChunkRender, BuildHasherDefault<NoHashHasher<u64>>>
 }
 
 impl World {
@@ -23,6 +24,7 @@ impl World {
             size: size as i32,
             origin: ChunkCoord::ZERO,
             chunks: HashMap::with_hasher(BuildHasherDefault::default()),
+            chunk_renders: HashMap::with_hasher(BuildHasherDefault::default()),
         }
     }
     pub fn load_chunk(&mut self, x: i32, y: i32, z: i32) -> Result<()> {
@@ -51,15 +53,17 @@ impl World {
     pub fn generate(&mut self, device: &Device, copy_pass: &CopyPass) -> Result<()> {
         let mut limit = 4;
         // todo sort by distance to origin
-        for (_i, chunk) in &mut self.chunks {
+        for (i, chunk) in &mut self.chunks {
             if limit == 0 {
                 break;
             }
             if !chunk.dirty {
                 continue;
             }
-            chunk.generate_mesh(device, copy_pass)?;
+            let render = ChunkRender::generate_mesh(chunk, device, copy_pass)?;
+            let _ = self.chunk_renders.entry(*i).insert_entry(render);
             limit -= 1;
+            chunk.dirty = false;
         }
         Ok(())
     }
@@ -77,16 +81,14 @@ impl World {
                     ) {
                         Err(e) => { println!("{}", e)},
                         Ok(c) => {
-                            if let Some(chunk) = self.chunks.get(&c.hash()) {
-                                if let Some(buffer) = &chunk.vertex_buffer {
+                            if let Some(chunk) = self.chunk_renders.get(&c.hash()) {
                                     let binding = BufferBinding::default()
-                                        .with_buffer(&buffer.buffer)
+                                        .with_buffer(&chunk.buffer)
                                         .with_offset(0);
                                     let pos = Vec3::new(x as f32 * CHUNK_DIMF, y as f32 * CHUNK_DIMF,z as f32 * CHUNK_DIMF);
                                     command_buffer.push_vertex_uniform_data(1, &pos);
                                     render_pass.bind_vertex_buffers(0, &[binding]);
-                                    render_pass.draw_indexed_primitives((buffer.vertices / 4 * 6) as u32, 1, 0, 0, 0);
-                                }
+                                    render_pass.draw_indexed_primitives(chunk.indices as u32, 1, 0, 0, 0);
                             }
                         }
                     }

@@ -1,19 +1,14 @@
 use anyhow::{anyhow, Result};
 use glam::Vec3;
-use nohash_hasher::NoHashHasher;
 use noise::{NoiseFn};
-use sdl3::gpu::{
-    Buffer, BufferBinding, BufferUsageFlags, CommandBuffer, CopyPass, Device, RenderPass, VertexAttribute, VertexBufferDescription, VertexElementFormat,
-};
-use std::{collections::HashMap, hash::BuildHasherDefault};
 
-use crate::{gpu_mem::upload_data, toroid::ToroidNoise};
+use crate::{toroid::ToroidNoise};
 // Voxel is a coordinate within a Chunk
 #[derive(Debug)]
 pub struct Voxel {
-    x: u8,
-    y: u8,
-    z: u8,
+    pub x: u8,
+    pub y: u8,
+    pub z: u8,
 }
 
 impl Voxel {
@@ -38,173 +33,6 @@ impl From<usize> for Voxel {
     }
 }
 
-#[repr(C)]
-#[derive(Clone, Copy, Debug)]
-pub struct Vertex {
-    pub position: Vec3,
-    pub normal: Vec3,
-    pub uvw: Vec3,
-}
-
-impl Vertex {
-    pub fn buffer_desc() -> VertexBufferDescription {
-        VertexBufferDescription::default()
-            .with_slot(0)
-            .with_input_rate(sdl3::gpu::VertexInputRate::Vertex)
-            .with_instance_step_rate(0)
-            .with_pitch(size_of::<Vertex>() as u32)
-    }
-
-    pub fn attributes() -> Vec<VertexAttribute> {
-        vec![
-            VertexAttribute::default()
-                .with_buffer_slot(0)
-                .with_location(0)
-                .with_format(VertexElementFormat::Float3)
-                .with_offset(0),
-            VertexAttribute::default()
-                .with_buffer_slot(0)
-                .with_location(1)
-                .with_format(VertexElementFormat::Float3)
-                .with_offset((size_of::<f32>() * 3) as u32),
-            VertexAttribute::default()
-                .with_buffer_slot(0)
-                .with_location(2)
-                .with_format(VertexElementFormat::Float3)
-                .with_offset((size_of::<f32>() * 6) as u32),
-        ]
-    }
-}
-
-fn new_cube_vertices(position: Vec3, top: f32, bottom: f32, sides: f32) -> Vec<Vertex> {
-    vec![
-        Vertex {
-            position: Vec3::new(-0.5, 0.5, 0.5) + position,
-            normal: Vec3::new(0., 1., 0.),
-            uvw: Vec3::new(0., 0., top),
-        }, // Top Left Front
-        Vertex {
-            position: Vec3::new(0.5, 0.5, 0.5) + position,
-            normal: Vec3::new(0., 1., 0.),
-            uvw: Vec3::new(1., 0., top),
-        }, // Top Right Front
-        Vertex {
-            position: Vec3::new(-0.5, 0.5, -0.5) + position,
-            normal: Vec3::new(0., 1., 0.),
-            uvw: Vec3::new(0., 1., top),
-        }, // Top Left Back
-        Vertex {
-            position: Vec3::new(0.5, 0.5, -0.5) + position,
-            normal: Vec3::new(0., 1., 0.),
-            uvw: Vec3::new(1., 1., top),
-        }, // Top Right Back
-        Vertex {
-            position: Vec3::new(-0.5, -0.5, 0.5) + position,
-            normal: Vec3::new(0., -1., 0.),
-            uvw: Vec3::new(0., 0., bottom),
-        }, // Bottom Left Front
-        Vertex {
-            position: Vec3::new(0.5, -0.5, 0.5) + position,
-            normal: Vec3::new(0., -1., 0.),
-            uvw: Vec3::new(1., 0., bottom),
-        }, // Bottom Right Front
-        Vertex {
-            position: Vec3::new(-0.5, -0.5, -0.5) + position,
-            normal: Vec3::new(0., -1., 0.),
-            uvw: Vec3::new(0., 1., bottom),
-        }, // Bottom Left Back
-        Vertex {
-            position: Vec3::new(0.5, -0.5, -0.5) + position,
-            normal: Vec3::new(0., -1., 0.),
-            uvw: Vec3::new(1., 1., bottom),
-        }, // Bottom Right Back
-        Vertex {
-            position: Vec3::new(-0.5, 0.5, 0.5) + position,
-            normal: Vec3::new(0., 0., 1.),
-            uvw: Vec3::new(0., 0., sides),
-        }, // Top Left Front
-        Vertex {
-            position: Vec3::new(0.5, 0.5, 0.5) + position,
-            normal: Vec3::new(0., 0., 1.),
-            uvw: Vec3::new(1., 0., sides),
-        }, // Top Right Front
-        Vertex {
-            position: Vec3::new(-0.5, -0.5, 0.5) + position,
-            normal: Vec3::new(0., 0., 1.),
-            uvw: Vec3::new(0., 1., sides),
-        }, // Bottom Left Front
-        Vertex {
-            position: Vec3::new(0.5, -0.5, 0.5) + position,
-            normal: Vec3::new(0., 0., 1.),
-            uvw: Vec3::new(1., 1., sides),
-        }, // Bottom Right Front
-        Vertex {
-            position: Vec3::new(-0.5, 0.5, -0.5) + position,
-            normal: Vec3::new(0., 0., -1.),
-            uvw: Vec3::new(1., 0., sides),
-        }, // Top Left Back
-        Vertex {
-            position: Vec3::new(0.5, 0.5, -0.5) + position,
-            normal: Vec3::new(0., 0., -1.),
-            uvw: Vec3::new(0., 0., sides),
-        }, // Top Right Back
-        Vertex {
-            position: Vec3::new(-0.5, -0.5, -0.5) + position,
-            normal: Vec3::new(0., 0., -1.),
-            uvw: Vec3::new(1., 1., sides),
-        }, // Bottom Left Back
-        Vertex {
-            position: Vec3::new(0.5, -0.5, -0.5) + position,
-            normal: Vec3::new(0., 0., -1.),
-            uvw: Vec3::new(0., 1., sides),
-        }, // Bottom Right Back
-        Vertex {
-            position: Vec3::new(-0.5, 0.5, 0.5) + position,
-            normal: Vec3::new(-1., 0., 0.),
-            uvw: Vec3::new(1., 0., sides),
-        }, // Top Left Front
-        Vertex {
-            position: Vec3::new(-0.5, -0.5, 0.5) + position,
-            normal: Vec3::new(-1., 0., 0.),
-            uvw: Vec3::new(1., 1., sides),
-        }, // Bottom Left Front
-        Vertex {
-            position: Vec3::new(-0.5, 0.5, -0.5) + position,
-            normal: Vec3::new(-1., 0., 0.),
-            uvw: Vec3::new(0., 0., sides),
-        }, // Top Left Back
-        Vertex {
-            position: Vec3::new(-0.5, -0.5, -0.5) + position,
-            normal: Vec3::new(-1., 0., 0.),
-            uvw: Vec3::new(0., 1., sides),
-        }, // Bottom Left Back
-        Vertex {
-            position: Vec3::new(0.5, 0.5, 0.5) + position,
-            normal: Vec3::new(1., 0., 0.),
-            uvw: Vec3::new(0., 0., sides),
-        }, // Top Right Front
-        Vertex {
-            position: Vec3::new(0.5, -0.5, 0.5) + position,
-            normal: Vec3::new(1., 0., 0.),
-            uvw: Vec3::new(0., 1., sides),
-        }, // Bottom Right Front
-        Vertex {
-            position: Vec3::new(0.5, 0.5, -0.5) + position,
-            normal: Vec3::new(1., 0., 0.),
-            uvw: Vec3::new(1., 0., sides),
-        }, // Top Right Back
-        Vertex {
-            position: Vec3::new(0.5, -0.5, -0.5) + position,
-            normal: Vec3::new(1., 0., 0.),
-            uvw: Vec3::new(1., 1., sides),
-        }, // Bottom Right Back
-    ]
-}
-
-pub struct VertexBuffer {
-    pub vertices: usize,
-    pub buffer: Buffer,
-}
 
 pub const CHUNK_DIM: u8 = 16;
 pub const CHUNK_DIMF: f32 = 16.;
@@ -212,7 +40,6 @@ pub const CHUNK_DIMF64 : f64 = 16.;
 pub struct Chunk {
     pub dirty: bool,
     pub materials: Vec<Material>,
-    pub vertex_buffer: Option<VertexBuffer>,
     pub version: u8,
 }
 
@@ -231,7 +58,6 @@ impl Chunk {
         Chunk {
             dirty: true,
             materials,
-            vertex_buffer: None,
             version: 0,
         }
     }
@@ -240,58 +66,6 @@ impl Chunk {
         self.materials[p.as_usize()] = m;
     }
 
-    pub fn generate_mesh(
-        &mut self,
-        device: &Device,
-        copy_pass: &CopyPass,
-    ) -> Result<()> {
-        if !self.dirty && self.vertex_buffer.is_some() {
-            return Ok(());
-        }
-        let mut skipped = 0;
-        let vertices = self
-            .materials
-            .iter()
-            .enumerate()
-            .map(|(index, mat)| {
-                let material = *mat;
-                if material == Material::Air {
-                    skipped += 1;
-                    return None;
-                }
-                let v = Voxel::from(index);
-                let side = material.sides();
-                let top = material.top().unwrap_or(side);
-                let bottom = material.bottom().unwrap_or(side);
-                let mesh = new_cube_vertices(
-                    Vec3::new(
-                        v.x as f32,
-                        v.y as f32,
-                        v.z as f32,
-                    ),
-                    top,
-                    bottom,
-                    side,
-                );
-                Some(mesh)
-            })
-            .flatten()
-            .collect::<Vec<Vec<Vertex>>>()
-            .concat();
-        let buffer = device
-            .create_buffer()
-            .with_usage(BufferUsageFlags::VERTEX)
-            .with_size((vertices.len() * size_of::<Vertex>()) as u32)
-            .build()?;
-        upload_data(device, copy_pass, &buffer, &vertices)?;
-        self.vertex_buffer = Some(VertexBuffer {
-            vertices: vertices.len(),
-            buffer,
-        });
-        self.version += 1;
-        self.dirty = false;
-        Ok(())
-    }
 }
 
 #[repr(u16)]
@@ -306,19 +80,19 @@ pub enum Material {
 }
 
 impl Material {
-    const fn top(&self) -> Option<f32> {
+    pub const fn top(&self) -> Option<f32> {
         match self {
             Material::Grass => Some(0.),
             _ => None,
         }
     }
-    const fn bottom(&self) -> Option<f32> {
+    pub const fn bottom(&self) -> Option<f32> {
         match self {
             Material::Grass => Some(2.),
             _ => None,
         }
     }
-    const fn sides(&self) -> f32 {
+    pub const fn sides(&self) -> f32 {
         match self {
             Material::Air => -1.,
             Material::Grass => 1.,

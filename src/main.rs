@@ -15,6 +15,7 @@ use sdl3::{
 mod app;
 mod camera;
 mod chunk;
+mod chunk_render;
 mod ui;
 mod world;
 mod gpu_mem;
