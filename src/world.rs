@@ -33,6 +33,7 @@ pub struct World {
     chunks: HashMap<u64, Chunk, BuildHasherDefault<NoHashHasher<u64>>>,
     chunk_renders: HashMap<u64, ChunkRender, BuildHasherDefault<NoHashHasher<u64>>>,
     chunks_to_generate: BinaryHeap<Reverse<DistantChunk>>,
+    chunks_to_load: BinaryHeap<Reverse<DistantChunk>>,
 }
 
 impl World {
@@ -44,10 +45,10 @@ impl World {
             chunks: HashMap::with_hasher(BuildHasherDefault::default()),
             chunk_renders: HashMap::with_hasher(BuildHasherDefault::default()),
             chunks_to_generate: BinaryHeap::new(),
+            chunks_to_load: BinaryHeap::new()
         }
     }
-    pub fn load_chunk(&mut self, x: i32, y: i32, z: i32) -> Result<()> {
-        let p= ChunkCoord::normalize(self.size, x, y, z)?;
+    pub fn load_chunk(&mut self, p: &ChunkCoord) {
         let chunk = Chunk::new(&mut self.noise, &p);
         if chunk.dirty {
             self.chunks_to_generate.push(Reverse(DistantChunk { distance_sq: self.origin.distance_sq(self.size, &p), chunk: p.hash() }))
@@ -55,14 +56,24 @@ impl World {
         self.chunks
             .entry(p.hash())
             .or_insert_with(|| chunk);
-        Ok(())
     }
 
-    pub fn load_chunks(&mut self, distance: i32) -> Result<()> {
+    pub fn load_chunks(&mut self) {
+        let mut limit = 4;
+        while limit > 0 && let Some(Reverse(chunk)) = self.chunks_to_load.pop() {
+            let coord = ChunkCoord::from(chunk.chunk);
+            self.load_chunk(&coord);
+            limit -= 1;
+        }
+    }
+
+    pub fn queue_chunks(&mut self, distance: i32) -> Result<()> {
         for x in -distance..distance {
             for y in i32::max(0, self.origin.y as i32 - distance)..(self.origin.y as i32 + distance) {
                 for z in -distance..distance {
-                    self.load_chunk(self.origin.x as i32 + x, y, self.origin.z as i32 + z)?;
+                    let coord = ChunkCoord::normalize(self.size, self.origin.x as i32 + x, self.origin.y as i32 + y, self.origin.z as i32 + z)?;
+                    let distance_sq = self.origin.distance_sq(self.size, &coord);
+                    self.chunks_to_load.push(Reverse(DistantChunk { distance_sq, chunk: coord.hash() }))
                 }
             }
         }

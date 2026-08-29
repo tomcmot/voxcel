@@ -130,7 +130,7 @@ impl App {
             Vec3::new(0.8, 0.8, 0.6),
         );
         let mut world = World::new(0, 32.);
-        world.load_chunks(16)?;
+        world.queue_chunks(16)?;
         Ok(App {
             main,
             world,
@@ -144,6 +144,7 @@ impl App {
     }
 
     pub fn generate_world(&mut self, device: &Device, copy_pass: &CopyPass) -> Result<()> {
+        self.world.load_chunks();
         self.world.generate(device, copy_pass)
     }
     pub fn render(
