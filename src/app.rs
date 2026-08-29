@@ -106,7 +106,7 @@ impl App {
         let indices = World::worst_case_indexes();
         let index_buffer = device
             .create_buffer()
-            .with_size((indices.len() * size_of::<u32>()) as u32)
+            .with_size((indices.len() * size_of::<u16>()) as u32)
             .with_usage(BufferUsageFlags::INDEX)
             .build()?;
         let sampler = create_sampler(&device)?;
@@ -172,7 +172,7 @@ impl App {
         render_pass.bind_graphics_pipeline(&self.main);
         cmdbuffer.push_vertex_uniform_data(0, &camera_buffer);
         cmdbuffer.push_fragment_uniform_data(0, &self.light);
-        render_pass.bind_index_buffer(&index_binding, IndexElementSize::_32BIT);
+        render_pass.bind_index_buffer(&index_binding, IndexElementSize::_16BIT);
         render_pass.bind_fragment_samplers(0, &sampler_bindings);
         self.world.render(cmdbuffer, render_pass);
     }

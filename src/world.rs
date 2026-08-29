@@ -119,21 +119,21 @@ impl World {
         }
     }
 
-    pub fn worst_case_indexes() -> Vec<u32> {
-        let voxels_per_chunk = CHUNK_DIM as u32 * CHUNK_DIM as u32 * CHUNK_DIM as u32;
+    pub fn worst_case_indexes() -> Vec<u16> {
+        let voxels_per_chunk = CHUNK_DIM as u16 * CHUNK_DIM as u16 * CHUNK_DIM as u16 / 2;
         // voxels_per_chunk * cube faces * indexes per face (aka 2 triangles of 3 indexes)
-        let max_indices = (voxels_per_chunk * 6 * 6) as usize;
+        let max_indices = (voxels_per_chunk as usize * 6 * 6) as usize;
         let mut indices = vec![0; max_indices];
         let faces = (voxels_per_chunk * 6) as usize;
         for i in 0..faces {
             // pattern per face
             // 0, 1, 2, 2, 1, 3,
-            indices[i * 6] = (i * 4) as u32;
-            indices[i * 6 + 1] = (i * 4 + 1) as u32;
-            indices[i * 6 + 2] = (i * 4 + 2) as u32;
-            indices[i * 6 + 3] = (i * 4 + 2) as u32;
-            indices[i * 6 + 4] = (i * 4 + 1) as u32;
-            indices[i * 6 + 5] = (i * 4 + 3) as u32;
+            indices[i * 6] = (i * 4) as u16;
+            indices[i * 6 + 1] = (i * 4 + 1) as u16;
+            indices[i * 6 + 2] = (i * 4 + 2) as u16;
+            indices[i * 6 + 3] = (i * 4 + 2) as u16;
+            indices[i * 6 + 4] = (i * 4 + 1) as u16;
+            indices[i * 6 + 5] = (i * 4 + 3) as u16;
         }
         indices
     }
