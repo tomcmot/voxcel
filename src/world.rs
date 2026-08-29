@@ -4,17 +4,35 @@ use nohash_hasher::NoHashHasher;
 use sdl3::gpu::{
     BufferBinding, CommandBuffer, CopyPass, Device, RenderPass,
 };
-use std::{collections::HashMap, hash::BuildHasherDefault};
+use std::{cmp::{Ordering, Reverse}, collections::{BinaryHeap, HashMap}, hash::BuildHasherDefault};
 
 use crate::{chunk::{CHUNK_DIM, CHUNK_DIMF, CHUNK_DIMF64, Chunk, ChunkCoord}, chunk_render::ChunkRender, toroid::ToroidNoise};
 
+#[derive(Debug, Eq, PartialEq)]
+struct DistantChunk {
+    distance_sq: u64,
+    chunk: u64
+}
+
+impl PartialOrd for DistantChunk {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        self.distance_sq.partial_cmp(&other.distance_sq)
+    }
+}
+
+impl Ord for DistantChunk {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.distance_sq.cmp(&other.distance_sq)
+    }
+}
 
 pub struct World {
     noise: ToroidNoise,
     size: i32,
     origin: ChunkCoord, // chunk the player is currently considered inside of
     chunks: HashMap<u64, Chunk, BuildHasherDefault<NoHashHasher<u64>>>,
-    chunk_renders: HashMap<u64, ChunkRender, BuildHasherDefault<NoHashHasher<u64>>>
+    chunk_renders: HashMap<u64, ChunkRender, BuildHasherDefault<NoHashHasher<u64>>>,
+    chunks_to_generate: BinaryHeap<Reverse<DistantChunk>>,
 }
 
 impl World {
@@ -25,20 +43,27 @@ impl World {
             origin: ChunkCoord::ZERO,
             chunks: HashMap::with_hasher(BuildHasherDefault::default()),
             chunk_renders: HashMap::with_hasher(BuildHasherDefault::default()),
+            chunks_to_generate: BinaryHeap::new(),
         }
     }
     pub fn load_chunk(&mut self, x: i32, y: i32, z: i32) -> Result<()> {
         let p= ChunkCoord::normalize(self.size, x, y, z)?;
+        let chunk = Chunk::new(&mut self.noise, &p);
+        if chunk.dirty {
+            self.chunks_to_generate.push(Reverse(DistantChunk { distance_sq: self.origin.distance_sq(self.size, &p), chunk: p.hash() }))
+        }
         self.chunks
             .entry(p.hash())
-            .or_insert_with(|| Chunk::new(&mut self.noise, p));
+            .or_insert_with(|| chunk);
         Ok(())
     }
 
     pub fn load_chunks(&mut self, distance: i32) -> Result<()> {
         for x in -distance..distance {
-            for z in -distance..distance {
-                self.load_chunk(self.origin.x as i32 + x, self.origin.y as i32, self.origin.z as i32 + z)?;
+            for y in i32::max(0, self.origin.y as i32 - distance)..(self.origin.y as i32 + distance) {
+                for z in -distance..distance {
+                    self.load_chunk(self.origin.x as i32 + x, y, self.origin.z as i32 + z)?;
+                }
             }
         }
         Ok(())
@@ -46,56 +71,43 @@ impl World {
 
     pub fn update_origin(&mut self, o: ChunkCoord) {
         self.chunks
-            .retain(|&k, _| ChunkCoord::from(k).distance(self.size as f32, &o) < 32.);
+            .retain(|&k, _| ChunkCoord::from(k).distance_sq(self.size, &o) < 32*32);
         self.origin = o;
     }
 
     pub fn generate(&mut self, device: &Device, copy_pass: &CopyPass) -> Result<()> {
         let mut limit = 4;
-        // todo sort by distance to origin
-        for (i, chunk) in &mut self.chunks {
-            if limit == 0 {
-                break;
+        while limit > 0 && let Some(Reverse(distant_chunk)) = self.chunks_to_generate.pop() {
+            if let Some(chunk) = self.chunks.get_mut(&distant_chunk.chunk) {
+
+                let render = ChunkRender::generate_mesh(chunk, device, copy_pass)?;
+                match render {
+                    None => {},
+                    Some(mesh) => {
+                        let _ = self.chunk_renders.entry(distant_chunk.chunk).insert_entry(mesh);
+                    },
+                }
+                limit -= 1;
+                chunk.dirty = false;
             }
-            if !chunk.dirty {
-                continue;
-            }
-            let render = ChunkRender::generate_mesh(chunk, device, copy_pass)?;
-            let _ = self.chunk_renders.entry(*i).insert_entry(render);
-            limit -= 1;
-            chunk.dirty = false;
+
         }
         Ok(())
     }
 
     pub fn render(&self, command_buffer: &CommandBuffer, render_pass: &RenderPass) {
-        let render_distance = 16;
-        for x in -render_distance..render_distance {
-            for y in i32::max(self.origin.y as i32 - render_distance, 0)..render_distance {
-                for z in -render_distance..render_distance {
-                    match ChunkCoord::normalize(
-                        self.size,
-                        self.origin.x as i32 + x,
-                        self.origin.y as i32 + y,
-                        self.origin.z as i32 + z
-                    ) {
-                        Err(e) => { println!("{}", e)},
-                        Ok(c) => {
-                            if let Some(chunk) = self.chunk_renders.get(&c.hash()) {
-                                    let binding = BufferBinding::default()
-                                        .with_buffer(&chunk.buffer)
-                                        .with_offset(0);
-                                    let pos = Vec3::new(x as f32 * CHUNK_DIMF, y as f32 * CHUNK_DIMF,z as f32 * CHUNK_DIMF);
-                                    command_buffer.push_vertex_uniform_data(1, &pos);
-                                    render_pass.bind_vertex_buffers(0, &[binding]);
-                                    render_pass.draw_indexed_primitives(chunk.indices as u32, 1, 0, 0, 0);
-                            }
-                        }
-                    }
-                }
-            }
+        for (u, chunk) in &self.chunk_renders {
+            let coord = ChunkCoord::from(*u);
+            let pos = canon_to_local(&coord, &self.origin, self.size);
+            let binding = BufferBinding::default()
+                    .with_buffer(&chunk.buffer)
+                    .with_offset(0);
+            command_buffer.push_vertex_uniform_data(1, &pos);
+            render_pass.bind_vertex_buffers(0, &[binding]);
+            render_pass.draw_indexed_primitives(chunk.indices as u32, 1, 0, 0, 0);
         }
     }
+
     pub fn worst_case_indexes() -> Vec<u32> {
         let voxels_per_chunk = CHUNK_DIM as u32 * CHUNK_DIM as u32 * CHUNK_DIM as u32;
         // voxels_per_chunk * cube faces * indexes per face (aka 2 triangles of 3 indexes)
@@ -113,5 +125,22 @@ impl World {
             indices[i * 6 + 5] = (i * 4 + 3) as u32;
         }
         indices
+    }
+}
+
+fn canon_to_local(coord: &ChunkCoord, origin: &ChunkCoord, size: i32) -> Vec3 {
+    let dx = wrap(coord.x as i32 - origin.x as i32, size);
+    let dz = wrap(coord.z as i32 - origin.z as i32, size);
+    let dy = coord.y as i32 - origin.y as i32;
+    Vec3::new(dx as f32 * CHUNK_DIMF,dy as f32 * CHUNK_DIMF, dz as f32 * CHUNK_DIMF)
+}
+
+fn wrap(v: i32, size: i32) -> i32 {
+    if v > size / 2 { 
+        v - size 
+    } else if v < -size / 2 { 
+        v + size 
+    } else { 
+        v 
     }
 }

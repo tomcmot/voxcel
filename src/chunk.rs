@@ -4,7 +4,7 @@ use noise::{NoiseFn};
 
 use crate::{toroid::ToroidNoise};
 // Voxel is a coordinate within a Chunk
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Voxel {
     pub x: u8,
     pub y: u8,
@@ -17,6 +17,22 @@ impl Voxel {
         let y = (self.y as usize) & 0xFF;
         let z = (self.z as usize) & 0xFF;
         x + (y << 4) + (z << 8)
+    }
+
+    pub fn increment(v: u8) -> u8 {
+        if v >= 15 {
+            v
+        } else {
+            v + 1
+        }
+    }
+
+    pub fn decrement(v: u8) -> u8 {
+        if v == 0 {
+            v
+        } else {
+            v - 1
+        }
     }
 }
 
@@ -37,6 +53,8 @@ impl From<usize> for Voxel {
 pub const CHUNK_DIM: u8 = 16;
 pub const CHUNK_DIMF: f32 = 16.;
 pub const CHUNK_DIMF64 : f64 = 16.;
+
+#[derive(Debug, PartialEq, Eq)]
 pub struct Chunk {
     pub dirty: bool,
     pub materials: Vec<Material>,
@@ -44,19 +62,24 @@ pub struct Chunk {
 }
 
 impl Chunk {
-    pub fn new(noise: &mut ToroidNoise, p: ChunkCoord) -> Chunk {
+    pub fn new(noise: &mut ToroidNoise, p: &ChunkCoord) -> Chunk {
         let mut materials =
             vec![Material::Air; CHUNK_DIM as usize * CHUNK_DIM as usize * CHUNK_DIM as usize];
+        let mut set = false;
         for x in 0..CHUNK_DIM {
             for y in 0..CHUNK_DIM {
                 for z in 0..CHUNK_DIM {
                     let voxel = Voxel { x, y, z };
-                    materials[voxel.as_usize()] = sample_material(noise, &p, &voxel);
+                    let mat = sample_material(noise, &p, &voxel);
+                    materials[voxel.as_usize()] = mat;
+                    if mat != Material::Air {
+                        set = true;
+                    }
                 }
             }
         }
         Chunk {
-            dirty: true,
+            dirty: set,
             materials,
             version: 0,
         }
@@ -66,10 +89,13 @@ impl Chunk {
         self.materials[p.as_usize()] = m;
     }
 
+    pub fn get_voxel(&self, p:Voxel) -> Material {
+        self.materials[p.as_usize()]
+    }
 }
 
 #[repr(u16)]
-#[derive(PartialEq, Eq, Copy, Clone)]
+#[derive(Debug, PartialEq, Eq, Copy, Clone)]
 pub enum Material {
     Air,
     Grass,
@@ -162,24 +188,19 @@ impl ChunkCoord {
         }
     }
 
-    pub fn distance(&self, size: f32, other: &ChunkCoord) -> f32 {
-        let x = other.x as f32;
-        let y = other.y as f32;
-        let z = other.z as f32;
-        let candidates = [
-            Vec3::new(x,y,z),
-            Vec3::new(x+size, y, z),
-            Vec3::new(x, y, z + size),
-            Vec3::new(x+size, y, z+size),
-            Vec3::new(x-size, y, z),
-            Vec3::new(x, y, z-size),
-            Vec3::new(x-size, y, z-size),
-            Vec3::new(x+size, y, z-size),
-            Vec3::new(x-size, y, z+size),
-        ];
-        let me = Vec3::new(self.x as f32, self.y as f32, self.z as f32);
-        
-        candidates.iter().map(|c| c.distance(me)).min_by(f32::total_cmp).unwrap_or(f32::MAX)
+    pub fn distance_sq(&self, size: i32, other: &ChunkCoord) -> u64 {
+        let mask = (size - 1) as u32;
+        let half_world = size as u32 / 2;
+
+        let dx = (self.x.wrapping_sub(other.x).wrapping_add(half_world) & mask) as i64 - half_world as i64;
+        let dy = if self.y > other.y { self.y - other.y } else { other.y - self.y };
+        let dz = (self.z.wrapping_sub(other.z).wrapping_add(half_world) & mask) as i64 - half_world as i64;
+
+        let dx_64 = dx.abs() as u64;
+        let dy_64 = dy as u64;
+        let dz_64 = dz.abs() as u64;
+
+        (dx_64 * dx_64) + (dy_64 * dy_64) + (dz_64 * dz_64)
     }
 }
 
