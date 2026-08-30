@@ -13,6 +13,7 @@ use crate::{
 };
 
 const TEXTURE_PATH: &'static str = "assets/blocks.png";
+const MASK_PATH: &'static str = "assets/block_masks.png";
 const SHADING_PATH: &'static str = "assets/light.png";
 
 const WINDOW_WIDTH: u32 = 800;
@@ -56,7 +57,8 @@ pub struct App {
     index_buffer: Buffer,
     sampler: Sampler,
     block_texture: Texture<'static>,
-    light_ramp: Texture<'static>
+    light_ramp: Texture<'static>,
+    mask_texture: Texture<'static>,
 }
 
 impl App {
@@ -111,12 +113,14 @@ impl App {
             .build()?;
         let sampler = create_sampler(&device)?;
         let block_texture = create_texture(&device, TextureType::_2DArray, 32, 32, 6)?;
+        let mask_texture = create_texture(&device, TextureType::_2DArray, 32, 32, 6)?;
         let light_ramp = create_texture(&device, TextureType::_2D, 1, 32, 1)?;
         {
             let copy_commands = device.acquire_command_buffer()?;
             let copy_pass = device.begin_copy_pass(&copy_commands)?;
             upload_data(&device, &copy_pass, &index_buffer, &indices)?;
             upload_texture(&device, &copy_pass, TEXTURE_PATH, &block_texture, 6)?;
+            upload_texture(&device, &copy_pass, MASK_PATH, &mask_texture, 6)?;
             upload_texture(&device, &copy_pass, SHADING_PATH, &light_ramp, 1)?;
             device.end_copy_pass(copy_pass);
             let _ = copy_commands.submit()?;
@@ -140,6 +144,7 @@ impl App {
             block_texture,
             light_ramp,
             index_buffer,
+            mask_texture,
         })
     }
 
@@ -159,6 +164,9 @@ impl App {
             TextureSamplerBinding::default()
                 .with_sampler(&self.sampler)
                 .with_texture(&self.light_ramp),
+            TextureSamplerBinding::default()
+                .with_sampler(&self.sampler)
+                .with_texture(&self.mask_texture)
         ];
 
         let index_binding = BufferBinding::default()

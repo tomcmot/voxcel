@@ -1,12 +1,12 @@
 use anyhow::{Result};
-use glam::Vec3;
+use glam::{Vec3};
 use nohash_hasher::NoHashHasher;
 use sdl3::gpu::{
     BufferBinding, CommandBuffer, CopyPass, Device, RenderPass,
 };
 use std::{cmp::{Ordering, Reverse}, collections::{BinaryHeap, HashMap}, hash::BuildHasherDefault};
 
-use crate::{chunk::{CHUNK_DIM, CHUNK_DIMF, CHUNK_DIMF64, Chunk, ChunkCoord}, chunk_render::ChunkRender, toroid::ToroidNoise};
+use crate::{chunk::{CHUNK_DIM, CHUNK_DIMF, CHUNK_DIMF64, Chunk, ChunkCoord}, chunk_render::{ChunkRender}, toroid::ToroidNoise};
 
 #[derive(Debug, Eq, PartialEq)]
 struct DistantChunk {
@@ -27,7 +27,8 @@ impl Ord for DistantChunk {
 }
 
 pub struct World {
-    noise: ToroidNoise,
+    height_noise: ToroidNoise,
+    biome_noise: ToroidNoise,
     size: i32,
     origin: ChunkCoord, // chunk the player is currently considered inside of
     chunks: HashMap<u64, Chunk, BuildHasherDefault<NoHashHasher<u64>>>,
@@ -39,7 +40,8 @@ pub struct World {
 impl World {
     pub fn new(seed: u32, size: f64) -> Self {
         World {
-            noise: ToroidNoise::new(seed, size * CHUNK_DIMF64),
+            height_noise: ToroidNoise::new(seed, size * CHUNK_DIMF64),
+            biome_noise: ToroidNoise::new(seed+1, size * CHUNK_DIMF64),
             size: size as i32,
             origin: ChunkCoord::ZERO,
             chunks: HashMap::with_hasher(BuildHasherDefault::default()),
@@ -49,7 +51,7 @@ impl World {
         }
     }
     pub fn load_chunk(&mut self, p: &ChunkCoord) {
-        let chunk = Chunk::new(&mut self.noise, &p);
+        let chunk = Chunk::new(&self.height_noise, &self.biome_noise, &p);
         if chunk.dirty {
             self.chunks_to_generate.push(Reverse(DistantChunk { distance_sq: self.origin.distance_sq(self.size, &p), chunk: p.hash() }))
         }
@@ -110,10 +112,12 @@ impl World {
         for (u, chunk) in &self.chunk_renders {
             let coord = ChunkCoord::from(*u);
             let pos = canon_to_local(&coord, &self.origin, self.size);
+            let biome =  chunk.biome.to_float();
             let binding = BufferBinding::default()
                     .with_buffer(&chunk.buffer)
                     .with_offset(0);
             command_buffer.push_vertex_uniform_data(1, &pos);
+            command_buffer.push_fragment_uniform_data(1, &biome);
             render_pass.bind_vertex_buffers(0, &[binding]);
             render_pass.draw_indexed_primitives(chunk.indices as u32, 1, 0, 0, 0);
         }

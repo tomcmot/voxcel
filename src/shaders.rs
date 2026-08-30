@@ -22,8 +22,8 @@ pub const VERTEX_SHADER: ShaderDesc = ShaderDesc {
 
 pub const FRAG_SHADER: ShaderDesc = ShaderDesc {
     entry_point: c"fragment",
-    samplers: 2,
-    uniform_buffers: 1,
+    samplers: 3,
+    uniform_buffers: 2,
     storage_buffers: 0,
     storage_textures: 0,
 };

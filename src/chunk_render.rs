@@ -2,7 +2,7 @@ use anyhow::Result;
 use glam::Vec3;
 use sdl3::gpu::{Buffer, BufferUsageFlags, CopyPass, Device, VertexAttribute, VertexBufferDescription, VertexElementFormat};
 
-use crate::{chunk::{Chunk, Material, Voxel}, gpu_mem::upload_data};
+use crate::{chunk::{Biome, Chunk, Material, Voxel}, gpu_mem::upload_data};
 
 
 #[repr(C)]
@@ -218,6 +218,7 @@ impl Direction {
 pub struct ChunkRender {
     pub indices: usize,
     pub buffer: Buffer,
+    pub biome: Biome,
     pub version: u8,
 }
 
@@ -271,6 +272,7 @@ impl ChunkRender {
         Ok(Some(ChunkRender {
             indices: vertices.len() / 4 * 6,
             buffer,
+            biome: chunk.biome,
             version: chunk.version
         }))
     }

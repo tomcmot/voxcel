@@ -1,8 +1,7 @@
 use anyhow::{anyhow, Result};
-use glam::Vec3;
 use noise::{NoiseFn};
 
-use crate::{toroid::ToroidNoise};
+use crate::{chunk::Biome::{Arctic, Desert, Jungle, Mystic, Plain}, toroid::ToroidNoise};
 // Voxel is a coordinate within a Chunk
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Voxel {
@@ -58,11 +57,12 @@ pub const CHUNK_DIMF64 : f64 = 16.;
 pub struct Chunk {
     pub dirty: bool,
     pub materials: Vec<Material>,
+    pub biome: Biome,
     pub version: u8,
 }
 
 impl Chunk {
-    pub fn new(noise: &mut ToroidNoise, p: &ChunkCoord) -> Chunk {
+    pub fn new(height_noise: &ToroidNoise, biome_noise: &ToroidNoise, p: &ChunkCoord) -> Chunk {
         let mut materials =
             vec![Material::Air; CHUNK_DIM as usize * CHUNK_DIM as usize * CHUNK_DIM as usize];
         let mut set = false;
@@ -70,7 +70,7 @@ impl Chunk {
             for y in 0..CHUNK_DIM {
                 for z in 0..CHUNK_DIM {
                     let voxel = Voxel { x, y, z };
-                    let mat = sample_material(noise, &p, &voxel);
+                    let mat = sample_material(height_noise, &p, &voxel);
                     materials[voxel.as_usize()] = mat;
                     if mat != Material::Air {
                         set = true;
@@ -82,6 +82,7 @@ impl Chunk {
             dirty: set,
             materials,
             version: 0,
+            biome: Biome::new(biome_noise.get([CHUNK_DIMF64 * p.x as f64, CHUNK_DIMF64 * p.z as f64]))
         }
     }
     pub fn update_voxel(&mut self, p: Voxel, m: Material) {
@@ -130,14 +131,14 @@ impl Material {
     }
 }
 const HALF_WORLD_HEIGHT: f64 = 8.;
-fn sample_material(noise: &mut ToroidNoise, chunk: &ChunkCoord, p: &Voxel) -> Material {
+fn sample_material(height_noise: &ToroidNoise, chunk: &ChunkCoord, p: &Voxel) -> Material {
     let x = (CHUNK_DIM as u32 * chunk.x + p.x as u32) as f64;
     let y = (CHUNK_DIM as u32 * chunk.y + p.y as u32) as f64;
     let z = (CHUNK_DIM as u32 * chunk.z + p.z as u32) as f64;
     if p.y == 0 && chunk.y == 0 {
         return Material::Magma;
     }
-    let height = HALF_WORLD_HEIGHT + (noise.get([x, z]) * HALF_WORLD_HEIGHT).ceil();
+    let height = HALF_WORLD_HEIGHT + (height_noise.get([x, z]) * HALF_WORLD_HEIGHT).ceil();
     if y > height {
         return Material::Air;
     }
@@ -148,7 +149,7 @@ fn sample_material(noise: &mut ToroidNoise, chunk: &ChunkCoord, p: &Voxel) -> Ma
     if y > 0.75 * height {
         Material::Dirt
     } else {
-        let n = noise.get([x, y, z]);
+        let n = height_noise.get([x, y, z]);
         if n < 0.5 {
             Material::Andesite
         } else {
@@ -222,5 +223,40 @@ fn wrap(x: i32, size: i32) -> u32 {
         (size + x) as u32
     } else {
         x as u32
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, Copy, Clone)]
+pub enum Biome {
+    Arctic,
+    Desert,
+    Jungle,
+    Mystic,
+    Plain,
+}
+
+impl Biome {
+    fn new(value: f64) -> Self {
+        if value < 0.1 {
+            Arctic
+        } else if value > 0.95 {
+            Mystic
+        } else if value > 0.8 {
+            Desert
+        } else if value > 0.6 {
+            Jungle
+        } else {
+            Plain
+        }
+    }
+
+    pub fn to_float(self) -> f32 {
+        match self {
+            Arctic => 1.,
+            Desert => 2.,
+            Jungle => 3.,
+            Mystic => 4.,
+            Plain => 5.,
+        }
     }
 }
