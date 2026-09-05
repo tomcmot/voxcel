@@ -1,8 +1,9 @@
 use anyhow::Result;
 use glam::Vec3;
+use noise::NoiseFn;
 use sdl3::gpu::{Buffer, BufferUsageFlags, CopyPass, Device, VertexAttribute, VertexBufferDescription, VertexElementFormat};
 
-use crate::{chunk::{Chunk, Material, Voxel}, gpu_mem::upload_data};
+use crate::{chunk::{Biome, CHUNK_DIMF64, Chunk, ChunkCoord, Material, Voxel}, gpu_mem::upload_data, toroid::ToroidNoise};
 
 
 #[repr(C)]
@@ -11,7 +12,7 @@ pub struct Vertex {
     pub position: Vec3,
     pub normal: Vec3,
     pub uvw: Vec3,
-    pub biome: f32,
+    pub biome: Vec3,
 }
 
 impl Vertex {
@@ -43,13 +44,13 @@ impl Vertex {
             VertexAttribute::default()
                 .with_buffer_slot(0)
                 .with_location(3)
-                .with_format(VertexElementFormat::Float)
+                .with_format(VertexElementFormat::Float3)
                 .with_offset((size_of::<f32>() * 9) as u32),
         ]
     }
 }
 
-fn vertices_at(direction: &Direction, position: Vec3, top: f32, bottom: f32, sides: f32, biome: f32) -> Vec<Vertex> {
+fn vertices_at(direction: &Direction, position: Vec3, top: f32, bottom: f32, sides: f32, biome: Vec3) -> Vec<Vertex> {
     match direction {
         Direction::PosX => vec![
             Vertex {
@@ -267,6 +268,8 @@ impl ChunkRender {
 
 pub fn generate_mesh(
     chunk: &Chunk,
+    chunkCoord: ChunkCoord,
+    biome_noise: &ToroidNoise,
 ) -> Option<Vec<Vertex>> {
     let vertices = chunk
         .materials
@@ -289,7 +292,7 @@ pub fn generate_mesh(
                     v.x as f32,
                     v.y as f32,
                     v.z as f32,
-                ), top, bottom, side, chunk.biome.to_float());
+                ), top, bottom, side, sample_biome(biome_noise, [chunkCoord.x as f64 * CHUNK_DIMF64 + v.x as f64, chunkCoord.z as f64 * CHUNK_DIMF64 + v.z as f64]));
                     Some(mesh)
                 } else {
                     None
@@ -304,4 +307,26 @@ pub fn generate_mesh(
     } else {
         None
     }
+}
+
+fn sample_biome(biome_noise: &ToroidNoise, center: [f64;2]) -> Vec3 {
+    let positions = vec![
+        center,
+        [center[0] + 1., center[1]],
+        [center[0] - 1., center[1]],
+        [center[0] + 1., center[1] + 1.],
+        [center[0] + 1., center[1] - 1.],
+        [center[0] - 1., center[1] + 1.],
+        [center[0] - 1., center[1] - 1.],
+        [center[0], center[1] + 1.],
+        [center[0], center[1] - 1.],
+    ];
+    let color = positions.iter()
+    .map(|p| {
+        Biome::new(biome_noise.get(*p)).color()
+    })
+    .fold(Vec3::new(0.,0.,0.), |acc, el| {
+        acc + el
+    }) / positions.len() as f32;
+    color
 }

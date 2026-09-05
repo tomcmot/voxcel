@@ -1,4 +1,5 @@
 use anyhow::{anyhow, Result};
+use glam::Vec3;
 use noise::{NoiseFn};
 
 use crate::{chunk::Biome::{Arctic, Desert, Jungle, Mystic, Plain}, toroid::ToroidNoise};
@@ -57,12 +58,11 @@ pub const CHUNK_DIMF64 : f64 = 16.;
 pub struct Chunk {
     pub dirty: bool,
     pub materials: Vec<Material>,
-    pub biome: Biome,
     pub version: u8,
 }
 
 impl Chunk {
-    pub fn new(height_noise: &ToroidNoise, biome_noise: &ToroidNoise, p: &ChunkCoord) -> Chunk {
+    pub fn new(height_noise: &ToroidNoise, p: &ChunkCoord) -> Chunk {
         let mut materials =
             vec![Material::Air; CHUNK_DIM as usize * CHUNK_DIM as usize * CHUNK_DIM as usize];
         let mut set = false;
@@ -82,7 +82,6 @@ impl Chunk {
             dirty: set,
             materials,
             version: 0,
-            biome: Biome::new(biome_noise.get([CHUNK_DIMF64 * p.x as f64, CHUNK_DIMF64 * p.z as f64]))
         }
     }
     pub fn update_voxel(&mut self, p: Voxel, m: Material) {
@@ -236,17 +235,17 @@ pub enum Biome {
 }
 
 impl Biome {
-    fn new(value: f64) -> Self {
-        if value < 0.1 {
-            Arctic
-        } else if value > 0.95 {
+    pub fn new(value: f64) -> Self {
+        if value > 0.95 {
             Mystic
-        } else if value > 0.8 {
+        } else if value > 0.65 {
             Desert
-        } else if value > 0.6 {
+        } else if value > 0.35 {
             Jungle
-        } else {
+        } else if value > 0.05 {
             Plain
+        } else {
+            Arctic
         }
     }
 
@@ -257,6 +256,15 @@ impl Biome {
             Jungle => 3.,
             Mystic => 4.,
             Plain => 5.,
+        }
+    }
+    pub const fn color(self) -> Vec3 {
+        match self {
+            Arctic => Vec3::new(0.85, 0.87, 0.88),
+            Desert => Vec3::new(0.75, 0.50, 0.19),
+            Jungle => Vec3::new(0.08,0.58,0.25),
+            Mystic => Vec3::new(0.50,0.48,0.83),
+            Plain => Vec3::new(0.37,0.68,0.23),
         }
     }
 }

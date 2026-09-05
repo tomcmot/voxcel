@@ -2,14 +2,14 @@ struct VertexInput {
     [[vk::location(0)]] float3 position;
     [[vk::location(1)]] float3 normal;
     [[vk::location(2)]] float3 uvw;
-    [[vk::location(3)]] float biome;
+    [[vk::location(3)]] float3 biome_color; // rgb
 };
 
 struct VertexOutput {
     float4 sv_position : SV_Position;
     float3 world_normal : TEXCOORD0;
     float3 uvw : TEXCOORD1;
-    float biome : TEXCOORD2;
+    float3 biome_color : TEXCOORD2; // rgb
 };
 
 [[vk::binding(0,1)]]
@@ -40,7 +40,7 @@ Sampler2D shading;
 [[vk::binding(2,2)]]
 Sampler2DArray mask;
 
-float3 hue_shift(float3 color, float hue, float sat);
+float3 hue_shift(float3 color, float3 biome_color);
 float biome_hue(float biome);
 float biome_sat(float biome);
 float3 rgb2hsv(float3 c);
@@ -54,7 +54,7 @@ VertexOutput vertex(VertexInput v)
     output.sv_position = mul(viewProj, worldPos);
     output.uvw = v.uvw;
     output.world_normal = v.normal;
-    output.biome = v.biome;
+    output.biome_color = v.biome_color;
     return output;
 }
 
@@ -67,17 +67,18 @@ float4 fragment(VertexOutput v) : SV_Target
     float4 albedo = texture.Sample(v.uvw);
     float3 lit = ambientColor + step.rgb * lightColor;
     if (mask.a > 0) {
-        float3 hue = hue_shift(albedo.rgb, biome_hue(v.biome), biome_sat(v.biome));
+        float3 biome_hsv = rgb2hsv(v.biome_color);
+        float3 hue = hue_shift(albedo.rgb, biome_hsv);
         albedo = float4(hue, albedo.a);
     }
     return float4(albedo.rgb * lit, albedo.a);
 }
 
-float3 hue_shift(float3 color, float hue, float sat)
+float3 hue_shift(float3 color, float3 biome_color)
 {
     float3 hsv = rgb2hsv(color);
-    hsv.x = hue;
-    hsv.y = hsv.y * sat;
+    hsv.x = biome_color.x;
+    hsv.y = biome_color.y;
     return hsv2rgb(hsv);
 }
 // Converts RGB to HSV space
@@ -97,29 +98,3 @@ float3 hsv2rgb(float3 c) {
     float3 p = abs(frac(c.xxx + K.xyz) * 6.0 - K.www);
     return c.z * lerp(K.xxx, clamp(p - K.xxx, 0.0, 1.0), c.y);
 }
-
-float biome_hue(float biome) {
-    if (biome < 2) {
-        return 63./360;
-    }
-    if (biome < 3) {
-        return 40./360;
-    }
-    if (biome < 4) {
-        return 152./360;
-    }
-    if (biome < 5) {
-        return 243./360;
-    }
-    return 101./360;
-}
-float biome_sat(float biome) {
-    if (biome < 2) {
-        return 0.1;
-    }
-    return 1;
-}
-/*
-    hue 27, 40, 63, 101, 152, 243
-
-*/

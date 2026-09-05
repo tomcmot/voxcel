@@ -64,10 +64,9 @@ impl World {
     pub fn load_chunk(&mut self, p: &ChunkCoord) {
         let tx = self.chunk_tx.clone();
         let height_noise = self.height_noise.clone();
-        let biome_noise = self.biome_noise.clone();
         let p = *p;
         self.pool.spawn(move || {
-            let chunk = Chunk::new(&height_noise, &biome_noise, &p);
+            let chunk = Chunk::new(&height_noise, &p);
             let _ = tx.send((p.hash(), chunk));
         });
     }
@@ -79,8 +78,10 @@ impl World {
             self.chunks.entry(hash).or_insert(chunk.clone());
             let chunk = chunk.clone();
             let tx = self.render_tx.clone();
+            let biome_noise = self.biome_noise.clone();
+            let coord = ChunkCoord::from(hash);
             self.pool.spawn(move || {
-                if let Some(mesh) = generate_mesh(&chunk) {
+                if let Some(mesh) = generate_mesh(&chunk, coord, &biome_noise) {
                     let _ = tx.send((hash, mesh));
                 }
             });
