@@ -2,7 +2,7 @@ use anyhow::Result;
 use glam::Vec3;
 use sdl3::gpu::{Buffer, BufferUsageFlags, CopyPass, Device, VertexAttribute, VertexBufferDescription, VertexElementFormat};
 
-use crate::{chunk::{Biome, Chunk, Material, Voxel}, gpu_mem::upload_data};
+use crate::{chunk::{Chunk, Material, Voxel}, gpu_mem::upload_data};
 
 
 #[repr(C)]
@@ -11,6 +11,7 @@ pub struct Vertex {
     pub position: Vec3,
     pub normal: Vec3,
     pub uvw: Vec3,
+    pub biome: f32,
 }
 
 impl Vertex {
@@ -39,32 +40,41 @@ impl Vertex {
                 .with_location(2)
                 .with_format(VertexElementFormat::Float3)
                 .with_offset((size_of::<f32>() * 6) as u32),
+            VertexAttribute::default()
+                .with_buffer_slot(0)
+                .with_location(3)
+                .with_format(VertexElementFormat::Float)
+                .with_offset((size_of::<f32>() * 9) as u32),
         ]
     }
 }
 
-fn vertices_at(direction: &Direction, position: Vec3, top: f32, bottom: f32, sides: f32) -> Vec<Vertex> {
+fn vertices_at(direction: &Direction, position: Vec3, top: f32, bottom: f32, sides: f32, biome: f32) -> Vec<Vertex> {
     match direction {
         Direction::PosX => vec![
             Vertex {
                 position: Vec3::new(0.5, 0.5, 0.5) + position,
                 normal: Vec3::new(1., 0., 0.),
                 uvw: Vec3::new(0., 0., sides),
+                biome,
             }, // Top Right Front
             Vertex {
                 position: Vec3::new(0.5, -0.5, 0.5) + position,
                 normal: Vec3::new(1., 0., 0.),
                 uvw: Vec3::new(0., 1., sides),
+                biome,
             }, // Bottom Right Front
             Vertex {
                 position: Vec3::new(0.5, 0.5, -0.5) + position,
                 normal: Vec3::new(1., 0., 0.),
                 uvw: Vec3::new(1., 0., sides),
+                biome,
             }, // Top Right Back
             Vertex {
                 position: Vec3::new(0.5, -0.5, -0.5) + position,
                 normal: Vec3::new(1., 0., 0.),
                 uvw: Vec3::new(1., 1., sides),
+                biome,
             }, // Bottom Right Back
             
         ],
@@ -73,21 +83,25 @@ fn vertices_at(direction: &Direction, position: Vec3, top: f32, bottom: f32, sid
                 position: Vec3::new(-0.5, 0.5, 0.5) + position,
                 normal: Vec3::new(-1., 0., 0.),
                 uvw: Vec3::new(1., 0., sides),
+                biome,
             }, // Top Left Front
             Vertex {
                 position: Vec3::new(-0.5, -0.5, 0.5) + position,
                 normal: Vec3::new(-1., 0., 0.),
                 uvw: Vec3::new(1., 1., sides),
+                biome,
             }, // Bottom Left Front
             Vertex {
                 position: Vec3::new(-0.5, 0.5, -0.5) + position,
                 normal: Vec3::new(-1., 0., 0.),
                 uvw: Vec3::new(0., 0., sides),
+                biome,
             }, // Top Left Back
             Vertex {
                 position: Vec3::new(-0.5, -0.5, -0.5) + position,
                 normal: Vec3::new(-1., 0., 0.),
                 uvw: Vec3::new(0., 1., sides),
+                biome,
             }, // Bottom Left Back
         ],
         Direction::PosY => vec![
@@ -95,21 +109,25 @@ fn vertices_at(direction: &Direction, position: Vec3, top: f32, bottom: f32, sid
                 position: Vec3::new(-0.5, 0.5, 0.5) + position,
                 normal: Vec3::new(0., 1., 0.),
                 uvw: Vec3::new(0., 0., top),
+                biome,
             }, // Top Left Front
             Vertex {
                 position: Vec3::new(0.5, 0.5, 0.5) + position,
                 normal: Vec3::new(0., 1., 0.),
                 uvw: Vec3::new(1., 0., top),
+                biome,
             }, // Top Right Front
             Vertex {
                 position: Vec3::new(-0.5, 0.5, -0.5) + position,
                 normal: Vec3::new(0., 1., 0.),
                 uvw: Vec3::new(0., 1., top),
+                biome,
             }, // Top Left Back
             Vertex {
                 position: Vec3::new(0.5, 0.5, -0.5) + position,
                 normal: Vec3::new(0., 1., 0.),
                 uvw: Vec3::new(1., 1., top),
+                biome,
             }, // Top Right Back
         ],
         Direction::NegY => vec![
@@ -117,21 +135,25 @@ fn vertices_at(direction: &Direction, position: Vec3, top: f32, bottom: f32, sid
                 position: Vec3::new(-0.5, -0.5, 0.5) + position,
                 normal: Vec3::new(0., -1., 0.),
                 uvw: Vec3::new(0., 0., bottom),
+                biome,
             }, // Bottom Left Front
             Vertex {
                 position: Vec3::new(0.5, -0.5, 0.5) + position,
                 normal: Vec3::new(0., -1., 0.),
                 uvw: Vec3::new(1., 0., bottom),
+                biome,
             }, // Bottom Right Front
             Vertex {
                 position: Vec3::new(-0.5, -0.5, -0.5) + position,
                 normal: Vec3::new(0., -1., 0.),
                 uvw: Vec3::new(0., 1., bottom),
+                biome,
             }, // Bottom Left Back
             Vertex {
                 position: Vec3::new(0.5, -0.5, -0.5) + position,
                 normal: Vec3::new(0., -1., 0.),
                 uvw: Vec3::new(1., 1., bottom),
+                biome,
             }, // Bottom Right Back
         ],
         Direction::PosZ => vec![
@@ -139,21 +161,25 @@ fn vertices_at(direction: &Direction, position: Vec3, top: f32, bottom: f32, sid
                 position: Vec3::new(-0.5, 0.5, 0.5) + position,
                 normal: Vec3::new(0., 0., 1.),
                 uvw: Vec3::new(0., 0., sides),
+                biome,
             }, // Top Left Front
             Vertex {
                 position: Vec3::new(0.5, 0.5, 0.5) + position,
                 normal: Vec3::new(0., 0., 1.),
                 uvw: Vec3::new(1., 0., sides),
+                biome,
             }, // Top Right Front
             Vertex {
                 position: Vec3::new(-0.5, -0.5, 0.5) + position,
                 normal: Vec3::new(0., 0., 1.),
                 uvw: Vec3::new(0., 1., sides),
+                biome,
             }, // Bottom Left Front
             Vertex {
                 position: Vec3::new(0.5, -0.5, 0.5) + position,
                 normal: Vec3::new(0., 0., 1.),
                 uvw: Vec3::new(1., 1., sides),
+                biome,
             }, // Bottom Right Front
         ],
         Direction::NegZ => vec![
@@ -162,21 +188,25 @@ fn vertices_at(direction: &Direction, position: Vec3, top: f32, bottom: f32, sid
                 position: Vec3::new(-0.5, 0.5, -0.5) + position,
                 normal: Vec3::new(0., 0., -1.),
                 uvw: Vec3::new(1., 0., sides),
+                biome,
             }, // Top Left Back
             Vertex {
                 position: Vec3::new(0.5, 0.5, -0.5) + position,
                 normal: Vec3::new(0., 0., -1.),
                 uvw: Vec3::new(0., 0., sides),
+                biome,
             }, // Top Right Back
             Vertex {
                 position: Vec3::new(-0.5, -0.5, -0.5) + position,
                 normal: Vec3::new(0., 0., -1.),
                 uvw: Vec3::new(1., 1., sides),
+                biome,
             }, // Bottom Left Back
             Vertex {
                 position: Vec3::new(0.5, -0.5, -0.5) + position,
                 normal: Vec3::new(0., 0., -1.),
                 uvw: Vec3::new(0., 1., sides),
+                biome,
             }, // Bottom Right Back
 
         ],
@@ -218,62 +248,60 @@ impl Direction {
 pub struct ChunkRender {
     pub indices: usize,
     pub buffer: Buffer,
-    pub biome: Biome,
-    pub version: u8,
 }
 
 impl ChunkRender {
-
-    pub fn generate_mesh(
-        chunk: &Chunk,
-        device: &Device,
-        copy_pass: &CopyPass,
-    ) -> Result<Option<Self>> {
-        let vertices = chunk
-            .materials
-            .iter()
-            .enumerate()
-            .map(|(index, mat)| {
-                let material = *mat;
-                if material == Material::Air {
-                    return vec![];
-                }
-                let v = Voxel::from(index);
-                let side = material.sides();
-                let top = material.top().unwrap_or(side);
-                let bottom = material.bottom().unwrap_or(side);
-                Direction::ALL.iter().filter_map(|d| {
-                    let v2 = Direction::position_at(&v, d);
-                    let n = chunk.get_voxel(v2);
-                    if n == Material::Air || v2 == v {
-                        let mesh = vertices_at(d, Vec3::new(
-                        v.x as f32,
-                        v.y as f32,
-                        v.z as f32,
-                    ), top, bottom, side);
-                        Some(mesh)
-                    } else {
-                        None
-                    }
-                }).collect::<Vec<Vec<Vertex>>>()
-            })
-            .flatten()
-            .collect::<Vec<Vec<Vertex>>>()
-            .concat();
-        if vertices.len() == 0 {
-            return Ok(None);
-        }
+    pub fn upload(device: &Device, copy_pass: &CopyPass, vertices:&Vec<Vertex>) -> Result<Self> {
         let buffer = device
             .create_buffer()
             .with_usage(BufferUsageFlags::VERTEX)
             .with_size((vertices.len() * size_of::<Vertex>()) as u32)
             .build()?;
-        upload_data(device, copy_pass, &buffer, &vertices)?;
-        Ok(Some(ChunkRender {
+        upload_data(device, copy_pass, &buffer, vertices)?;
+        Ok(ChunkRender {
             indices: vertices.len() / 4 * 6,
             buffer,
-            biome: chunk.biome,
-            version: chunk.version
-        }))
+        })
+    }
+}
+
+pub fn generate_mesh(
+    chunk: &Chunk,
+) -> Option<Vec<Vertex>> {
+    let vertices = chunk
+        .materials
+        .iter()
+        .enumerate()
+        .map(|(index, mat)| {
+            let material = *mat;
+            if material == Material::Air {
+                return vec![];
+            }
+            let v = Voxel::from(index);
+            let side = material.sides();
+            let top = material.top().unwrap_or(side);
+            let bottom = material.bottom().unwrap_or(side);
+            Direction::ALL.iter().filter_map(|d| {
+                let v2 = Direction::position_at(&v, d);
+                let n = chunk.get_voxel(v2);
+                if n == Material::Air || v2 == v {
+                    let mesh = vertices_at(d, Vec3::new(
+                    v.x as f32,
+                    v.y as f32,
+                    v.z as f32,
+                ), top, bottom, side, chunk.biome.to_float());
+                    Some(mesh)
+                } else {
+                    None
+                }
+            }).collect::<Vec<Vec<Vertex>>>()
+        })
+        .flatten()
+        .collect::<Vec<Vec<Vertex>>>()
+        .concat();
+    if vertices.len() > 0 {
+        Some(vertices)
+    } else {
+        None
     }
 }

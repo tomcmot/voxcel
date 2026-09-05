@@ -1154,6 +1154,7 @@ dependencies = [
  "nohash-hasher",
  "noise",
  "rand 0.10.2",
+ "rayon",
  "sdl3",
 ]
 

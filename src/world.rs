@@ -1,12 +1,13 @@
 use anyhow::{Result};
 use glam::{Vec3};
 use nohash_hasher::NoHashHasher;
+use rayon::{ThreadPool, ThreadPoolBuilder};
 use sdl3::gpu::{
     BufferBinding, CommandBuffer, CopyPass, Device, RenderPass,
 };
-use std::{cmp::{Ordering, Reverse}, collections::{BinaryHeap, HashMap}, hash::BuildHasherDefault};
+use std::{cmp::{Ordering, Reverse}, collections::{BinaryHeap, HashMap}, hash::BuildHasherDefault, sync::{Arc, mpsc}};
 
-use crate::{chunk::{CHUNK_DIM, CHUNK_DIMF, CHUNK_DIMF64, Chunk, ChunkCoord}, chunk_render::{ChunkRender}, toroid::ToroidNoise};
+use crate::{chunk::{CHUNK_DIM, CHUNK_DIMF, CHUNK_DIMF64, Chunk, ChunkCoord}, chunk_render::{ChunkRender, Vertex, generate_mesh}, toroid::ToroidNoise};
 
 #[derive(Debug, Eq, PartialEq)]
 struct DistantChunk {
@@ -27,37 +28,71 @@ impl Ord for DistantChunk {
 }
 
 pub struct World {
-    height_noise: ToroidNoise,
-    biome_noise: ToroidNoise,
+    height_noise: Arc<ToroidNoise>,
+    biome_noise: Arc<ToroidNoise>,
     size: i32,
     origin: ChunkCoord, // chunk the player is currently considered inside of
-    chunks: HashMap<u64, Chunk, BuildHasherDefault<NoHashHasher<u64>>>,
+    chunks: HashMap<u64, Arc<Chunk>, BuildHasherDefault<NoHashHasher<u64>>>,
     chunk_renders: HashMap<u64, ChunkRender, BuildHasherDefault<NoHashHasher<u64>>>,
-    chunks_to_generate: BinaryHeap<Reverse<DistantChunk>>,
     chunks_to_load: BinaryHeap<Reverse<DistantChunk>>,
+    pool: ThreadPool,
+    chunk_tx: mpsc::Sender<(u64, Chunk)>,
+    chunk_rx: mpsc::Receiver<(u64, Chunk)>,
+    render_tx: mpsc::Sender<(u64, Vec<Vertex>)>,
+    render_rx: mpsc::Receiver<(u64, Vec<Vertex>)>,
 }
 
 impl World {
-    pub fn new(seed: u32, size: f64) -> Self {
+    pub fn new(seed: u32, size: f64, threads: usize) -> Self {
+        let (chunk_tx, chunk_rx) = mpsc::channel();
+        let (render_tx, render_rx) = mpsc::channel();
         World {
-            height_noise: ToroidNoise::new(seed, size * CHUNK_DIMF64),
-            biome_noise: ToroidNoise::new(seed+1, size * CHUNK_DIMF64),
+            height_noise: Arc::new(ToroidNoise::new(seed, size * CHUNK_DIMF64)),
+            biome_noise: Arc::new(ToroidNoise::new(seed+1, size * CHUNK_DIMF64)),
             size: size as i32,
             origin: ChunkCoord::ZERO,
             chunks: HashMap::with_hasher(BuildHasherDefault::default()),
             chunk_renders: HashMap::with_hasher(BuildHasherDefault::default()),
-            chunks_to_generate: BinaryHeap::new(),
-            chunks_to_load: BinaryHeap::new()
+            chunks_to_load: BinaryHeap::new(),
+            pool: ThreadPoolBuilder::new().num_threads(threads).build().unwrap(),
+            chunk_tx,
+            chunk_rx,
+            render_tx,
+            render_rx,
         }
     }
     pub fn load_chunk(&mut self, p: &ChunkCoord) {
-        let chunk = Chunk::new(&self.height_noise, &self.biome_noise, &p);
-        if chunk.dirty {
-            self.chunks_to_generate.push(Reverse(DistantChunk { distance_sq: self.origin.distance_sq(self.size, &p), chunk: p.hash() }))
+        let tx = self.chunk_tx.clone();
+        let height_noise = self.height_noise.clone();
+        let biome_noise = self.biome_noise.clone();
+        let p = *p;
+        self.pool.spawn(move || {
+            let chunk = Chunk::new(&height_noise, &biome_noise, &p);
+            let _ = tx.send((p.hash(), chunk));
+        });
+    }
+
+    pub fn poll_chunks(&mut self) {
+        while let Ok((hash, chunk)) = self.chunk_rx.try_recv() {
+            let chunk = Arc::new(chunk);
+            // todo handle versioning and origin relevance
+            self.chunks.entry(hash).or_insert(chunk.clone());
+            let chunk = chunk.clone();
+            let tx = self.render_tx.clone();
+            self.pool.spawn(move || {
+                if let Some(mesh) = generate_mesh(&chunk) {
+                    let _ = tx.send((hash, mesh));
+                }
+            });
         }
-        self.chunks
-            .entry(p.hash())
-            .or_insert_with(|| chunk);
+    }
+
+    pub fn poll_renders(&mut self, device: &Device, copy_pass: &CopyPass) -> Result<()> {
+        while let Ok((hash, vertices)) = self.render_rx.try_recv() {
+            let render = ChunkRender::upload(device, copy_pass, &vertices)?;
+            self.chunk_renders.entry(hash).or_insert(render);
+        }
+        Ok(())
     }
 
     pub fn load_chunks(&mut self) {
@@ -88,36 +123,14 @@ impl World {
         self.origin = o;
     }
 
-    pub fn generate(&mut self, device: &Device, copy_pass: &CopyPass) -> Result<()> {
-        let mut limit = 4;
-        while limit > 0 && let Some(Reverse(distant_chunk)) = self.chunks_to_generate.pop() {
-            if let Some(chunk) = self.chunks.get_mut(&distant_chunk.chunk) {
-
-                let render = ChunkRender::generate_mesh(chunk, device, copy_pass)?;
-                match render {
-                    None => {},
-                    Some(mesh) => {
-                        let _ = self.chunk_renders.entry(distant_chunk.chunk).insert_entry(mesh);
-                    },
-                }
-                limit -= 1;
-                chunk.dirty = false;
-            }
-
-        }
-        Ok(())
-    }
-
     pub fn render(&self, command_buffer: &CommandBuffer, render_pass: &RenderPass) {
         for (u, chunk) in &self.chunk_renders {
             let coord = ChunkCoord::from(*u);
             let pos = canon_to_local(&coord, &self.origin, self.size);
-            let biome =  chunk.biome.to_float();
             let binding = BufferBinding::default()
                     .with_buffer(&chunk.buffer)
                     .with_offset(0);
             command_buffer.push_vertex_uniform_data(1, &pos);
-            command_buffer.push_fragment_uniform_data(1, &biome);
             render_pass.bind_vertex_buffers(0, &[binding]);
             render_pass.draw_indexed_primitives(chunk.indices as u32, 1, 0, 0, 0);
         }

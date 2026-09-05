@@ -1,3 +1,5 @@
+use std::thread::available_parallelism;
+
 use anyhow::Result;
 use glam::{Mat4, Vec3};
 use sdl3::{
@@ -133,7 +135,8 @@ impl App {
             Vec3::new(0.3, 0.8, 0.6).normalize(),
             Vec3::new(0.8, 0.8, 0.6),
         );
-        let mut world = World::new(0, 32.);
+        let threads = available_parallelism().unwrap();
+        let mut world = World::new(0, 32., (threads.get() - 1).max(1));
         world.queue_chunks(16)?;
         Ok(App {
             main,
@@ -150,7 +153,8 @@ impl App {
 
     pub fn generate_world(&mut self, device: &Device, copy_pass: &CopyPass) -> Result<()> {
         self.world.load_chunks();
-        self.world.generate(device, copy_pass)
+        self.world.poll_chunks();
+        self.world.poll_renders(device, copy_pass)
     }
     pub fn render(
         &self,

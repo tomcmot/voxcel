@@ -2,12 +2,14 @@ struct VertexInput {
     [[vk::location(0)]] float3 position;
     [[vk::location(1)]] float3 normal;
     [[vk::location(2)]] float3 uvw;
+    [[vk::location(3)]] float biome;
 };
 
 struct VertexOutput {
     float4 sv_position : SV_Position;
     float3 world_normal : TEXCOORD0;
     float3 uvw : TEXCOORD1;
+    float biome : TEXCOORD2;
 };
 
 [[vk::binding(0,1)]]
@@ -27,11 +29,6 @@ cbuffer Lighting {
     float3   ambientColor;
     float3   lightDir;
     float3   lightColor;
-}
-
-[[vk::binding(1,3)]]
-cbuffer Biome {
-    float biome;
 }
 
 [[vk::binding(0,2)]]
@@ -57,6 +54,7 @@ VertexOutput vertex(VertexInput v)
     output.sv_position = mul(viewProj, worldPos);
     output.uvw = v.uvw;
     output.world_normal = v.normal;
+    output.biome = v.biome;
     return output;
 }
 
@@ -69,7 +67,7 @@ float4 fragment(VertexOutput v) : SV_Target
     float4 albedo = texture.Sample(v.uvw);
     float3 lit = ambientColor + step.rgb * lightColor;
     if (mask.a > 0) {
-        float3 hue = hue_shift(albedo.rgb, biome_hue(biome), biome_sat(biome));
+        float3 hue = hue_shift(albedo.rgb, biome_hue(v.biome), biome_sat(v.biome));
         albedo = float4(hue, albedo.a);
     }
     return float4(albedo.rgb * lit, albedo.a);

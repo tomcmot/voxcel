@@ -12,6 +12,7 @@ imgui-sdl3 = { git = "https://github.com/florianvazelle/imgui-sdl3", version = "
 nohash-hasher = "0.2.0"
 noise = "0.9.0"
 rand = "0.10.2"
+rayon = "1.12.0"
 sdl3 = "0.18.4"
 [package.metadata.bundle]
 name = "voxcel"

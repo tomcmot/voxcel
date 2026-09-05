@@ -159,7 +159,7 @@ fn sample_material(height_noise: &ToroidNoise, chunk: &ChunkCoord, p: &Voxel) ->
 }
 
 // ChunkCoord is the coordinate of a chunk in chunk units (see CHUNK_DIM)
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub struct ChunkCoord {
     pub x: u32,
     pub y: u32,
