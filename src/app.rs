@@ -177,8 +177,9 @@ impl App {
             .with_buffer(&self.index_buffer)
             .with_offset(0);
 
+        let proj_view = self.camera.projection(WINDOW_WIDTH as f32, WINDOW_HEIGHT as f32) * self.camera.view();
         let camera_buffer = CameraBuffer {
-            proj_view: self.camera.projection(WINDOW_WIDTH as f32, WINDOW_HEIGHT as f32) * self.camera.view(),
+            proj_view,
             model: Mat4::IDENTITY,
         };
         render_pass.bind_graphics_pipeline(&self.main);
@@ -186,7 +187,7 @@ impl App {
         cmdbuffer.push_fragment_uniform_data(0, &self.light);
         render_pass.bind_index_buffer(&index_binding, IndexElementSize::_16BIT);
         render_pass.bind_fragment_samplers(0, &sampler_bindings);
-        self.world.render(cmdbuffer, render_pass);
+        self.world.render(cmdbuffer, render_pass, proj_view);
     }
 }
 

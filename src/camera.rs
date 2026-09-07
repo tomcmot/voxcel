@@ -1,8 +1,8 @@
-
 use glam::{
     Mat4, Vec3,
     camera::rh::{proj::directx, view::look_to_mat4},
 };
+
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct Camera {

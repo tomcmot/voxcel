@@ -12,6 +12,7 @@ use sdl3::{
     sys::timer::SDL_GetTicksNS,
 };
 
+mod aabb;
 mod app;
 mod camera;
 mod chunk;

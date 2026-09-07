@@ -1,5 +1,5 @@
 use anyhow::{Result};
-use glam::{Vec3};
+use glam::{Mat4, Vec3};
 use nohash_hasher::NoHashHasher;
 use rayon::{ThreadPool, ThreadPoolBuilder};
 use sdl3::gpu::{
@@ -7,7 +7,7 @@ use sdl3::gpu::{
 };
 use std::{cmp::{Ordering, Reverse}, collections::{BinaryHeap, HashMap}, hash::BuildHasherDefault, sync::{Arc, mpsc}};
 
-use crate::{chunk::{CHUNK_DIM, CHUNK_DIMF, CHUNK_DIMF64, Chunk, ChunkCoord}, chunk_render::{ChunkRender, Vertex, generate_mesh}, toroid::ToroidNoise};
+use crate::{aabb::{AABB, Plane}, chunk::{CHUNK_DIM, CHUNK_DIMF, CHUNK_DIMF64, Chunk, ChunkCoord}, chunk_render::{ChunkRender, Vertex, generate_mesh}, toroid::ToroidNoise};
 
 #[derive(Debug, Eq, PartialEq)]
 struct DistantChunk {
@@ -124,16 +124,23 @@ impl World {
         self.origin = o;
     }
 
-    pub fn render(&self, command_buffer: &CommandBuffer, render_pass: &RenderPass) {
+    pub fn render(&self, command_buffer: &CommandBuffer, render_pass: &RenderPass, proj_view: Mat4) {
+        let view_planes = Plane::frustrum_planes(proj_view);
         for (u, chunk) in &self.chunk_renders {
             let coord = ChunkCoord::from(*u);
             let pos = canon_to_local(&coord, &self.origin, self.size);
-            let binding = BufferBinding::default()
-                    .with_buffer(&chunk.buffer)
-                    .with_offset(0);
-            command_buffer.push_vertex_uniform_data(1, &pos);
-            render_pass.bind_vertex_buffers(0, &[binding]);
-            render_pass.draw_indexed_primitives(chunk.indices as u32, 1, 0, 0, 0);
+            let aabb = AABB {
+                min: pos,
+                max: pos + (Vec3::ONE * CHUNK_DIMF)
+            };
+            if aabb.intersects_frustrum(&view_planes) {
+                let binding = BufferBinding::default()
+                        .with_buffer(&chunk.buffer)
+                        .with_offset(0);
+                command_buffer.push_vertex_uniform_data(1, &pos);
+                render_pass.bind_vertex_buffers(0, &[binding]);
+                render_pass.draw_indexed_primitives(chunk.indices as u32, 1, 0, 0, 0);
+            }
         }
     }
 
